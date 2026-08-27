@@ -1,0 +1,528 @@
+substitutions:
+  name: ulanzi-tc001
+  friendly_name: Ulanzi TC001
+
+packages:
+  common: !include ../../packages/common.yaml
+  diagnostics: !include ../../packages/diagnostics.yaml
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/lubeda/EspHoMaTriXv2
+      ref: 2026.7.1
+    refresh: 60s
+    components: [ehmtxv2]
+
+esphome:
+  on_boot:
+    then:
+      - ds1307.read_time:
+
+esp32:
+  board: esp32dev
+  cpu_frequency: 240MHz
+  # Larger OTA app slots than the default table; the firmware exceeds the
+  # stock 0x1C0000 partitions.
+  partitions: partitions.csv
+  framework:
+    type: esp-idf
+    version: recommended
+    advanced:
+      ignore_efuse_custom_mac: true
+
+preferences:
+  flash_write_interval: 1min
+
+logger:
+  baud_rate: 0
+
+esp32_ble_tracker:
+
+bluetooth_proxy:
+  active: true
+
+api:
+  custom_services: true
+
+  actions:
+    - action: rtttl_play
+      variables:
+        tune: string
+      then:
+        - rtttl.play:
+            rtttl: !lambda 'return tune;'
+
+    - action: notify
+      variables:
+        icon: string
+        message: string
+      then:
+        - lambda: |-
+            id(rgb8x32)->icon_screen(icon, message, 0, 5);
+            id(rgb8x32)->force_screen(icon, 5);
+
+    - action: show_clock
+      then:
+        - script.execute: show_clock
+
+    - action: show_weather
+      variables:
+        condition: string
+        temperature: float
+      then:
+        - script.execute:
+            id: show_weather_screen
+            condition: !lambda return condition;
+            temperature: !lambda return temperature;
+            label: ""
+
+    - action: show_weather_forecast
+      variables:
+        condition: string
+        temperature: float
+        label: string
+      then:
+        - script.execute:
+            id: show_weather_screen
+            condition: !lambda return condition;
+            temperature: !lambda return temperature;
+            label: !lambda return label;
+
+#####
+# battery_pin: GPIO34
+# ldr_pin: GPIO35
+# buzzer_pin: GPIO15
+# matrix_pin: GPIO32
+# left_button_pin: GPIO26
+# mid_button_pin: GPIO27
+# right_button_pin: GPIO14
+# scl_pin: GPIO22
+# sda_pin: GPIO21
+#####
+
+globals:
+  # aab = auto-adjustable brightness
+  - id: aab_enable
+    type: "bool"
+    restore_value: true
+    initial_value: "true"
+  - id: aab_add
+    type: int
+    initial_value: '10'
+  - id: aab_max
+    type: int
+    initial_value: '220'
+  - id: aab_min
+    type: int
+    initial_value: '50'
+
+output:
+  - platform: ledc
+    pin:
+      number: GPIO15
+      ignore_strapping_warning: true
+    id: rtttl_out
+
+rtttl:
+  output: rtttl_out
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
+  id: i2cbus
+
+time:
+  - id: !extend homeassistant_time
+    on_time_sync:
+      then:
+        ds1307.write_time:
+
+  - platform: ds1307
+    update_interval: never
+    id: ehmtx_time
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: ehmtx_light
+    channel_colors: GRB
+    chipset: WS2812
+    pin: GPIO32
+    num_leds: 256
+    color_correct: [30%, 30%, 30%]
+    name: Light
+    max_refresh_rate: 16ms
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      lambda: |-
+        id(ehmtx_display)->set_enabled(false);
+    on_turn_off:
+      lambda: |-
+        id(ehmtx_display)->set_enabled(true);
+
+display:
+  - platform: addressable_light
+    id: ehmtx_display
+    addressable_light_id: ehmtx_light
+    width: 32
+    height: 8
+    pixel_mapper: |-
+      if (y % 2 == 0) {
+        return (y * 32) + x;
+      }
+      return (y * 32) + (31 - x);
+    rotation: 0°
+    update_interval: 16ms
+    auto_clear_enabled: true
+    lambda: |-
+      id(rgb8x32)->tick();
+      id(rgb8x32)->draw();
+
+interval:
+  - id: wifi_alarm_blink
+    interval: 500ms
+    then:
+      - if:
+          condition:
+            not:
+              wifi.connected:
+          then:
+            - lambda: |-
+                static bool blink_on = false;
+                blink_on = !blink_on;
+                if (blink_on) {
+                  id(rgb8x32)->show_alarm(255, 0, 0, 2);
+                } else {
+                  id(rgb8x32)->hide_alarm();
+                }
+          else:
+            - lambda: |-
+                id(rgb8x32)->hide_alarm();
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO26
+      inverted: true
+    name: Left button
+  - platform: gpio
+    pin:
+      inverted: true
+      number: GPIO27
+      mode: INPUT_PULLUP
+    name: Middle button
+    on_click:
+      - min_length: 5000ms
+        max_length: 60000ms
+        then:
+          - script.execute: factory_reset_warn
+  - platform: gpio
+    pin:
+      number: GPIO14
+      inverted: true
+    name: Right button
+
+switch:
+  - platform: template
+    name: Display
+    icon: mdi:power
+    restore_mode: ALWAYS_ON
+    lambda: |-
+      return id(rgb8x32)->show_display;
+    turn_on_action:
+      lambda: |-
+        id(rgb8x32)->set_display_on();
+    turn_off_action:
+      lambda: |-
+        id(rgb8x32)->set_display_off();
+
+  - platform: template
+    name: Automatic Brightness
+    icon: mdi:brightness-auto
+    restore_mode: DISABLED
+    lambda: |-
+      return id(aab_enable);
+    turn_on_action:
+      lambda: |-
+        id(aab_enable) = true;
+    turn_off_action:
+      lambda: |-
+        id(aab_enable) = false;
+
+sensor:
+  - platform: sht3xd
+    temperature:
+      name: Temperature
+    humidity:
+      name: Relative Humidity
+    update_interval: 60s
+
+  - platform: adc
+    id: battery_voltage
+    pin: GPIO34
+    name: Battery
+    update_interval: 10s
+    device_class: battery
+    accuracy_decimals: 0
+    attenuation: auto
+    filters:
+      - sliding_window_moving_average:
+          window_size: 15
+          send_every: 15
+          send_first_at: 1
+      - multiply: 1.6
+      - lambda: |-
+          auto r = ((x - 3) / 0.69 * 100.00);
+          if (r >= 100) return 100;
+          if (r > 0) return r;
+          if (r <= 0) return 1;
+          return 0;
+    unit_of_measurement: '%'
+
+  - platform: adc
+    id: light_sensor
+    name: Illuminance
+    pin:
+      number: GPIO35
+      allow_other_uses: true
+      mode:
+        input: true
+    update_interval: 60s
+    attenuation: auto
+    unit_of_measurement: lx
+    device_class: illuminance
+    accuracy_decimals: 0
+    filters:
+      - lambda: |-
+          return (x / 10000.0) * 2000000.0 - 15;
+
+  - platform: adc
+    id: light_sensor_internal
+    pin:
+      number: GPIO35
+      allow_other_uses: true
+      mode:
+        input: true
+    update_interval: 1s
+    attenuation: auto
+    unit_of_measurement: lx
+    device_class: illuminance
+    accuracy_decimals: 0
+    filters:
+      - lambda: |-
+          return (x / 10000.0) * 2000000.0 - 15;
+    on_value:
+      then:
+        - lambda: |-
+            if ( id(aab_enable) ) {
+              int n = x / 4 + id(aab_add); // new_value
+              if (n > id(aab_max)) n = id(aab_max);
+              if (n < id(aab_min)) n = id(aab_min);
+              int c = id(rgb8x32)->get_brightness(); // current value
+              c = c>0?c:1 ;
+              int d = (n - c) * 100 / c; // diff in %
+              if ( abs(d) > 2 ) id(rgb8x32)->set_brightness(n);
+            }
+
+number:
+  - platform: template
+    name: Brightness
+    icon: mdi:brightness-5
+    min_value: 50
+    max_value: 255
+    step: 5
+    lambda: |-
+      return id(rgb8x32)->get_brightness();
+    set_action:
+      lambda: |-
+        if ( !id(aab_enable) ) {
+          id(rgb8x32)->set_brightness(x);
+        }
+
+script:
+  - id: factory_reset_warn
+    then:
+      - rtttl.play:
+          rtttl: "reset:d=8,o=6,b=140:c,p,c,p,c,p,2g5"
+      - lambda: |-
+          id(rgb8x32)->icon_screen("error", "Factory reset!", 0, 6);
+          id(rgb8x32)->force_screen("error", 5);
+      - delay: 4s
+      - button.press: factory_reset_button
+
+  - id: del_screens
+    then:
+      - lambda: |-
+          id(rgb8x32)->del_screen("weather_*", 21);
+          id(rgb8x32)->del_screen("*", 15);
+
+  - id: show_clock
+    then:
+      - lambda: |-
+          id(del_screens).execute();
+          id(rgb8x32)->icon_clock("calendar|day#2", 1440, 10, false, 78,186,74);
+          id(rgb8x32)->force_screen("calendar|day#2", 15);
+
+  - id: show_weather_screen
+    parameters:
+      condition: string
+      temperature: float
+      label: string
+    then:
+      - lambda: |-
+          if (condition.empty() || isnan(temperature)) {
+            ESP_LOGD("weather", "No weather data");
+            return;
+          }
+
+          std::string icon = "weather_" + condition;
+          for (auto &c : icon) {
+            if (c == '-') c = '_';
+          }
+
+          char buffer[32];
+          if (label.empty()) {
+            snprintf(buffer, sizeof(buffer), "%.0f°C", temperature);
+          } else {
+            snprintf(buffer, sizeof(buffer), "%s %.0f°C", label.c_str(), temperature);
+          }
+
+          id(del_screens).execute();
+          id(rgb8x32)->icon_text_screen(icon, buffer, 30, 30, true, 255,255,255);
+          id(rgb8x32)->force_screen(icon, 21);
+
+font:
+  - file:
+      url: https://github.com/trip5/Matrix-Fonts/raw/main/8-series/MatrixLight8.ttf
+      type: web
+    id: default_font
+    size: 8
+    glyphs: |-
+      !?"%()+*=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnÖÄÜöäüopqrstuvwxyz@<>ß§€/ĀČĒĢĪĶĻŅŠŪŽāčēģīķļņšūž
+
+  - file:
+      url: https://github.com/trip5/Matrix-Fonts/raw/main/6-series/MatrixChunky6.ttf
+      type: web
+    id: special_font
+    size: 6
+    glyphs: |-
+      !?"%()+*=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnÖÄÜöäüopqrstuvwxyz@<>ß§€/ĀČĒĢĪĶĻŅŠŪŽāčēģīķļņšūž
+
+ehmtxv2:
+  id: rgb8x32
+  advanced_clock: false
+  show_seconds: false
+  icons2html: false
+  matrix_component: ehmtx_display
+  time_component: ehmtx_time
+  default_font_id: default_font
+  default_font_yoffset: 9
+  special_font_id: special_font
+  special_font_yoffset: 7
+  icons:
+    - id: error
+      lameid: 40530
+    - id: home_assistant
+      lameid: 47693
+    - id: temperature
+      lameid: 2056
+    - id: lightbulb
+      lameid: 1762
+    - id: speaker
+      lameid: 9136
+    - id: print3d
+      lameid: 55700
+    - id: internet
+      lameid: 51061
+    - id: temp
+      lameid: 20275
+    - id: garage
+      lameid: 29129
+    - id: door
+      lameid: 24087
+    - id: wind
+      lameid: 22148
+    - id: rain
+      lameid: 6427
+    - id: phone
+      lameid: 1232
+    - id: fire
+      lameid: 9272
+    - id: tv
+      lameid: 9754
+    - id: nature
+      lameid: 23726
+    - id: work
+      lameid: 25808
+    - id: bike
+      lameid: 22841
+    - id: power
+      lameid: 32930
+    - id: solar
+      lameid: 27283
+    - id: energy
+      lameid: 26034
+    - id: sun
+      lameid: 5807
+    - id: shopping
+      lameid: 34801
+    - id: thunder
+      lameid: 37533
+    - id: mic
+      lameid: 5313
+    - id: birthday
+      lameid: 102
+    - id: xmastree
+      lameid: 1782
+    - id: lock
+      lameid: 7775
+    - id: sleep8x32
+      url: https://user-images.githubusercontent.com/16407309/224850723-634c9b2d-55d9-44f2-9f93-765c0485b090.gif
+    - id: weather_clear_night
+      lameid: 53383
+    - id: weather_cloudy
+      frame_duration: 192
+      lameid: 25991
+    - id: weather_exceptional
+      lameid: 16754
+    - id: weather_fog
+      lameid: 52167
+    - id: weather_hail
+      lameid: 53288
+    - id: weather_lightning
+      lameid: 23713
+    - id: weather_lightning_rainy
+      lameid: 49299
+    - id: weather_partlycloudy
+      frame_duration: 210
+      lameid: 22160
+    - id: weather_pouring
+      lameid: 49300
+    - id: weather_rainy
+      lameid: 26565
+    - id: weather_snowy
+      lameid: 2289
+    - id: weather_snowy_rainy
+      lameid: 49301
+    - id: weather_sunny
+      lameid: 11201
+    - id: weather_windy
+      lameid: 15618
+    - id: weather_windy_variant
+      lameid: 15618
+    - id: weather_cloudy_night
+      lameid: 12195
+
+  on_start_running:
+    then:
+      lambda: |-
+        id(rgb8x32)->expand_icon_to_9(1);
+        id(rgb8x32)->set_infotext_color(0,0,0, 0,0,0, false, 1);
+        id(rgb8x32)->set_weekday_accent_on();
+        id(show_clock).execute();
+
+  on_empty_queue:
+    then:
+      lambda: |-
+        id(show_clock).execute();

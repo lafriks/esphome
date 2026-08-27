@@ -1,0 +1,121 @@
+name: Release Drafter
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: release-drafter
+  cancel-in-progress: false
+
+jobs:
+  release-drafter:
+    name: Update draft release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Calculate version from pinned ESPHome release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          base=$(sed -n 's/^ *esphome-version: *//p' .github/workflows/build.yml)
+          if [[ -z "${base}" ]]; then
+            echo "::error::Could not read esphome-version from build.yml"
+            exit 1
+          fi
+
+          # The newest 100 releases always include everything tagged for the
+          # current ESPHome version, so one page is enough.
+          if ! releases=$(gh api "repos/${GH_REPO}/releases?per_page=100"); then
+            echo "::error::Failed to list releases"
+            exit 1
+          fi
+
+          # Highest existing sequence (draft or published) for this base
+          # version: the bare tag counts as 1, `<base>-N` counts as N.
+          latest_seq=$(jq -r --arg base "${base}" \
+            '[.[] | .tag_name
+              | select(. == $base or startswith($base + "-"))
+              | if . == $base then 1 else (ltrimstr($base + "-") | tonumber?) end
+              | select(. != null)]
+             | max // 0' <<< "${releases}")
+
+          tag_for_seq() {
+            if [[ "$1" -le 1 ]]; then echo "${base}"; else echo "${base}-$1"; fi
+          }
+
+          if [[ "${latest_seq}" -eq 0 ]]; then
+            seq=1
+          else
+            # If the existing release at the highest seq is still a draft,
+            # reuse it so subsequent pushes update the same draft. Otherwise
+            # start a new one.
+            is_draft=$(jq -r --arg tag "$(tag_for_seq "${latest_seq}")" \
+              '[.[] | select(.tag_name == $tag)] | first | .draft' <<< "${releases}")
+            if [[ "${is_draft}" == "true" ]]; then
+              seq=${latest_seq}
+            else
+              seq=$((latest_seq + 1))
+            fi
+          fi
+
+          version=$(tag_for_seq "${seq}")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Calculated version: ${version} (ESPHome ${base})"
+
+      - uses: release-drafter/release-drafter@34d80673e067bdc0c24568d3af899c216adcfaa9  # v7.7.0
+        id: drafter
+        with:
+          version: ${{ steps.version.outputs.version }}
+          tag: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Delete stale assets from the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ steps.drafter.outputs.id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${RELEASE_ID}" ]]; then
+            echo "::error::release-drafter did not report a release id"
+            exit 1
+          fi
+          # release-drafter maintains a draft, but refuse to touch the release
+          # unless it actually is one: deleting a published release's assets
+          # would be irreversible, so a misconfiguration must fail loudly here
+          # rather than lose published firmware.
+          if ! release=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}"); then
+            echo "::error::Failed to fetch release ${RELEASE_ID}"
+            exit 1
+          fi
+          if [[ "$(jq -r '.draft' <<< "${release}")" != "true" ]]; then
+            echo "::error::Release ${RELEASE_ID} is not a draft; refusing to delete its assets"
+            exit 1
+          fi
+          if ! asset_ids=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}/assets" \
+              --paginate --jq '.[].id'); then
+            echo "::error::Failed to list assets for release ${RELEASE_ID}"
+            exit 1
+          fi
+          # A bare `while read <<< ""` would loop once on an empty id.
+          if [[ -z "${asset_ids}" ]]; then
+            echo "Draft release ${RELEASE_ID} has no assets to delete"
+            exit 0
+          fi
+          while read -r id; do
+            echo "Deleting asset ${id}"
+            gh api "repos/${GH_REPO}/releases/assets/${id}" --method DELETE --silent
+          done <<< "${asset_ids}"

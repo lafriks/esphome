@@ -1,0 +1,323 @@
+substitutions:
+  name: xiao-ir-mate
+  friendly_name: XIAO Smart IR Mate
+
+packages:
+  common: !include ../../packages/common.yaml
+  diagnostics: !include ../../packages/diagnostics.yaml
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+# Holds the RGB light state across a Wi-Fi drop so it can be restored on
+# reconnect (the disconnect indicator blink overwrites the live state).
+globals:
+  - id: saved_light_on
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: saved_light_r
+    type: float
+    restore_value: no
+    initial_value: "0"
+  - id: saved_light_g
+    type: float
+    restore_value: no
+    initial_value: "0"
+  - id: saved_light_b
+    type: float
+    restore_value: no
+    initial_value: "0"
+  - id: saved_light_brightness
+    type: float
+    restore_value: no
+    initial_value: "0"
+
+wifi:
+  power_save_mode: none
+  on_connect:
+    - if:
+        condition:
+          lambda: "return id(saved_light_on);"
+        then:
+          - light.turn_on:
+              id: rgb_light
+              brightness: !lambda return id(saved_light_brightness);
+              red: !lambda return id(saved_light_r);
+              green: !lambda return id(saved_light_g);
+              blue: !lambda return id(saved_light_b);
+        else:
+          - light.turn_off: rgb_light
+  on_disconnect:
+    - lambda: |-
+        auto v = id(rgb_light).remote_values;
+        id(saved_light_on) = v.is_on();
+        id(saved_light_r) = v.get_red();
+        id(saved_light_g) = v.get_green();
+        id(saved_light_b) = v.get_blue();
+        id(saved_light_brightness) = v.get_brightness();
+
+remote_transmitter:
+  id: ir_tx
+  pin: GPIO3
+  carrier_duty_percent: 50%
+  non_blocking: false
+  on_transmit:
+    # Blue blink while sending an IR/RF code.
+    - script.execute:
+        id: flash_activity
+        red: 0
+        green: 0
+        blue: 1.0
+
+remote_receiver:
+  - id: ir_rx
+    pin:
+      number: GPIO4
+      inverted: true
+    on_raw:
+      # Green blink whenever a code is received.
+      - script.execute:
+          id: flash_activity
+          red: 0
+          green: 1.0
+          blue: 0
+
+infrared:
+  - platform: ir_rf_proxy
+    name: IR Proxy Transmitter
+    id: ir_proxy_tx
+    remote_transmitter_id: ir_tx
+  - platform: ir_rf_proxy
+    name: IR Proxy Receiver
+    id: ir_proxy_rx
+    remote_receiver_id: ir_rx
+
+output:
+  # PWM so vibration intensity is adjustable (see the Vibration Strength number).
+  - platform: ledc
+    id: vibration_output
+    pin: GPIO6  # D4
+    frequency: 1000Hz
+
+# Controllable RGB status LED (also used as Wi-Fi status indicator while
+# disconnected, since you can't control it from HA in that state anyway).
+light:
+  - platform: esp32_rmt_led_strip
+    channel_colors: GRB
+    pin: GPIO7  # D5
+    num_leds: 1
+    chipset: WS2812
+    rmt_symbols: 48
+    name: Status RGB Light
+    id: rgb_light
+    restore_mode: RESTORE_DEFAULT_OFF
+    effects:
+      - pulse:
+      - random:
+
+# ---------------------------------------------------------------------------
+# Vibration motor exposed as a controllable switch + helper script
+# ---------------------------------------------------------------------------
+# Adjustable haptic intensity, applied whenever the motor is turned on.
+number:
+  - platform: template
+    id: vibration_strength
+    name: Vibration Strength
+    icon: mdi:vibrate
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    min_value: 0
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+
+switch:
+  # Template switch drives the PWM output at the configured strength so it can
+  # still be toggled from HA (and by the vibe script) as a simple on/off device.
+  - platform: template
+    id: vibration_switch
+    name: Vibration
+    icon: mdi:vibrate
+    optimistic: true
+    turn_on_action:
+      - output.set_level:
+          id: vibration_output
+          level: !lambda return id(vibration_strength).state / 100.0;
+    turn_off_action:
+      - output.turn_off: vibration_output
+
+script:
+  # Short, parameterised haptic pulse used for touch / button feedback.
+  - id: vibe
+    parameters:
+      delay_ms: int
+    then:
+      # Drive the motor output directly so haptic feedback does NOT toggle the
+      # exposed Vibration switch entity in Home Assistant.
+      - output.set_level:
+          id: vibration_output
+          level: !lambda return id(vibration_strength).state / 100.0;
+      - delay: !lambda return delay_ms;
+      - output.turn_off: vibration_output
+
+  # Brief RGB blink to indicate IR/RF activity. flash_length makes the light
+  # return to its previous (HA-controlled) state automatically. Skipped while
+  # Wi-Fi is down so it doesn't fight the disconnect indicator blink.
+  - id: flash_activity
+    parameters:
+      red: float
+      green: float
+      blue: float
+    then:
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - light.turn_on:
+                id: rgb_light
+                flash_length: 150ms
+                brightness: 100%
+                red: !lambda return red;
+                green: !lambda return green;
+                blue: !lambda return blue;
+
+# ---------------------------------------------------------------------------
+# Touch button -> Home Assistant events (+ haptic feedback on touch)
+# ---------------------------------------------------------------------------
+event:
+  - platform: template
+    id: touch_event
+    name: Touch
+    device_class: button
+    event_types:
+      - single_click
+      - double_click
+      - long_press
+
+binary_sensor:
+  # Capacitive touch pad. Raw state is exposed to HA, and click gestures are
+  # forwarded as events. Every touch gives a short haptic confirmation.
+  - platform: gpio
+    id: touch_pad
+    name: Touch Pad
+    icon: mdi:gesture-tap
+    # Events (touch_event) are the primary interface; raw state is hidden by
+    # default to keep the HA device tidy. Enable it if you want held/released.
+    disabled_by_default: true
+    pin:
+      number: GPIO5  # D3
+      mode: INPUT_PULLDOWN
+    on_press:
+      - script.execute:
+          id: vibe
+          delay_ms: 80
+    on_multi_click:
+      # Double click: two presses in quick succession.
+      - timing:
+          - ON for at most 3s
+          - OFF for at most 0.4s
+          - ON for at most 3s
+          - OFF for at least 0.1s
+        then:
+          - event.trigger:
+              id: touch_event
+              event_type: double_click
+      # Long press: held down for at least 3 seconds.
+      - timing:
+          - ON for at least 3s
+        then:
+          - script.execute:
+              id: vibe
+              delay_ms: 250
+          - event.trigger:
+              id: touch_event
+              event_type: long_press
+      # Single click: one press, released, with no quick second press.
+      - timing:
+          - ON for at most 3s
+          - OFF for at least 0.4s
+        then:
+          - event.trigger:
+              id: touch_event
+              event_type: single_click
+
+  # Physical reset/boot button (D9): short press = restart,
+  # long press (>=5s) = restart with factory defaults.
+  - platform: gpio
+    id: reset_button
+    pin:
+      number: GPIO9  # D9
+      mode: INPUT_PULLUP
+    filters:
+      - invert:
+    on_click:
+      - min_length: 50ms
+        max_length: 5000ms
+        then:
+          - script.execute:
+              id: vibe
+              delay_ms: 80
+          - button.press: restart_button
+      - min_length: 5000ms
+        max_length: 60000ms
+        then:
+          # Long vibration + red blinking as a warning before wiping.
+          - script.execute:
+              id: vibe
+              delay_ms: 500
+          - repeat:
+              count: 6
+              then:
+                - light.turn_on:
+                    id: rgb_light
+                    brightness: 100%
+                    red: 100%
+                    green: 0%
+                    blue: 0%
+                    transition_length: 0s
+                - delay: 150ms
+                - light.turn_off:
+                    id: rgb_light
+                    transition_length: 0s
+                - delay: 150ms
+          - button.press: factory_reset_button
+
+button:
+  - platform: template
+    name: Test Vibration
+    icon: mdi:vibrate
+    on_press:
+      - script.execute:
+          id: vibe
+          delay_ms: 200
+
+# ---------------------------------------------------------------------------
+# Wi-Fi status indicator: blink the RGB white while not connected.
+# ---------------------------------------------------------------------------
+interval:
+  - id: blink_rgb
+    interval: 500ms
+    then:
+      - if:
+          condition:
+            not:
+              wifi.connected:
+          then:
+            - lambda: |-
+                static bool state = false;
+                state = !state;
+                auto call = id(rgb_light).turn_on();
+                call.set_transition_length(0);
+                if (state) {
+                  call.set_rgb(1.0, 1.0, 1.0);
+                  call.set_brightness(1.0);
+                } else {
+                  call.set_brightness(0.0);
+                }
+                call.perform();

@@ -1,0 +1,51 @@
+# Diagnostics functionality
+binary_sensor:
+  - platform: status
+    id: api_connection
+    name: API Connection
+    device_class: connectivity
+    filters:
+      - delayed_on: 1s
+
+button:
+  - platform: restart
+    id: restart_button
+    name: Restart
+    entity_category: config
+    disabled_by_default: true
+
+  - platform: factory_reset
+    id: factory_reset_button
+    name: Factory Reset
+    entity_category: diagnostic
+    disabled_by_default: true
+
+sensor:
+  - platform: uptime
+    id: uptime_sensor
+    name: Uptime
+    icon: mdi:timer
+    entity_category: diagnostic
+    disabled_by_default: true
+
+  - platform: wifi_signal
+    id: wifi_rssi
+    name: RSSI
+    icon: mdi:wifi
+    entity_category: diagnostic
+    disabled_by_default: true
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP Address
+      icon: mdi:network-outline
+    ssid:
+      name: Connected SSID
+      icon: mdi:wifi-settings
+    bssid:
+      name: Connected BSSID
+      icon: mdi:wifi-settings
+    mac_address:
+      name: MAC Address

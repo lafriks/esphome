@@ -1,0 +1,110 @@
+substitutions:
+  name: nous-a5t
+  friendly_name: Nous A5T
+  relay_restore_mode: RESTORE_DEFAULT_OFF
+
+packages:
+  common: !include ../../packages/common.yaml
+  diagnostics: !include ../../packages/diagnostics.yaml
+
+esp8266:
+  board: esp8285
+  restore_from_flash: true
+
+preferences:
+  flash_write_interval: 1min
+
+# UART pins are not exposed on this device; keep serial logging off.
+logger:
+  baud_rate: 0
+
+binary_sensor:
+  # Main button: short press turns everything off, holding for >=5s performs
+  # a factory reset
+  - id: button_state0
+    platform: gpio
+    pin:
+      number: GPIO16
+      inverted: true
+    on_click:
+      - min_length: 50ms
+        max_length: 2000ms
+        then:
+          - switch.turn_off: relay1
+          - switch.turn_off: relay2
+          - switch.turn_off: relay3
+          - switch.turn_off: relay4
+      - min_length: 5000ms
+        max_length: 60000ms
+        then:
+          # Blink the button LED as a warning before wiping.
+          - repeat:
+              count: 6
+              then:
+                - light.turn_on: blue_led
+                - delay: 150ms
+                - light.turn_off: blue_led
+                - delay: 150ms
+          - button.press: factory_reset_button
+
+sensor:
+  # Small buttons over ADC - see https://templates.blakadder.com/nous_A5T.html
+  - id: a0_vcc
+    platform: adc
+    pin: VCC
+    update_interval: 1s
+    internal: true
+    filters:
+      - clamp:
+          min_value: 0
+          max_value: 4
+          ignore_out_of_range: true
+      - timeout:
+          timeout: 1s
+          value: 4
+    on_value_range:
+      - below: 1.5
+        then:
+          - switch.toggle: relay3
+      - above: 1.5
+        below: 2.5
+        then:
+          - switch.toggle: relay2
+      - above: 2.5
+        below: 3.5
+        then:
+          - switch.toggle: relay1
+
+light:
+  - id: blue_led
+    platform: status_led
+    name: Status LED
+    pin:
+      inverted: true
+      number: GPIO2
+
+switch:
+  - platform: gpio
+    name: Switch 1
+    pin: GPIO14
+    id: relay1
+    restore_mode: ${relay_restore_mode}
+
+  - platform: gpio
+    name: Switch 2
+    pin: GPIO12
+    id: relay2
+    restore_mode: ${relay_restore_mode}
+
+  - platform: gpio
+    name: Switch 3
+    pin: GPIO13
+    id: relay3
+    restore_mode: ${relay_restore_mode}
+
+  - platform: gpio
+    name: USB Switch
+    pin: GPIO5
+    inverted: true
+    id: relay4
+    restore_mode: ${relay_restore_mode}

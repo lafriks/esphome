@@ -1,0 +1,111 @@
+name: ESPHome Update
+
+on:
+  schedule:
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: esphome-update
+  cancel-in-progress: true
+
+jobs:
+  update:
+    name: Check for new ESPHome release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Determine versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api repos/esphome/esphome/releases/latest --jq .tag_name)
+          current=$(sed -n 's/^ *esphome-version: *//p' .github/workflows/build.yml)
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          echo "ESPHome current=${current} latest=${latest}"
+
+      - name: Bump esphome-version
+        if: steps.versions.outputs.latest != steps.versions.outputs.current
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          set -euo pipefail
+          sed -i "s/^\( *esphome-version:\) .*/\1 ${LATEST}/" .github/workflows/build.yml
+
+      - name: Validate configurations with new version
+        id: validate
+        if: steps.versions.outputs.latest != steps.versions.outputs.current
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          set -uo pipefail
+          status=passed
+          : > /tmp/validate.log
+          for f in devices/*/*.factory.yaml; do
+            echo "== ${f}" >> /tmp/validate.log
+            if ! docker run --rm -v "$PWD":/config \
+                "ghcr.io/esphome/esphome:${LATEST}" config "${f}" > /tmp/out.log 2>&1; then
+              status=failed
+              tail -n 30 /tmp/out.log >> /tmp/validate.log
+            else
+              echo "OK" >> /tmp/validate.log
+            fi
+          done
+          sudo rm -rf .esphome devices/*/.esphome devices/*/.gitignore
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update pull request
+        if: steps.versions.outputs.latest != steps.versions.outputs.current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+          CURRENT: ${{ steps.versions.outputs.current }}
+          STATUS: ${{ steps.validate.outputs.status }}
+        run: |
+          set -euo pipefail
+          branch=esphome-update
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${branch}"
+          git add .github/workflows/build.yml
+          git commit -m "Update ESPHome to ${LATEST}"
+          git push -f origin "${branch}"
+          {
+            echo "Updates ESPHome from \`${CURRENT}\` to \`${LATEST}\`."
+            echo
+            echo "Release notes: https://esphome.io/changelog/${LATEST%.*}.0/"
+            echo
+            if [[ "${STATUS}" == "passed" ]]; then
+              echo "All configurations validate against ${LATEST}."
+            else
+              echo "> [!WARNING]"
+              echo "> Some configurations FAILED validation against ${LATEST}"
+              echo "> and need manual migration before merging:"
+            fi
+            echo
+            echo '```'
+            tail -c 60000 /tmp/validate.log
+            echo '```'
+            echo
+            echo "_Note: CI does not run automatically on PRs created by_"
+            echo "_github-actions; close and reopen this PR to trigger it._"
+          } > /tmp/body.md
+          if gh pr view "${branch}" --json state --jq .state 2>/dev/null | grep -q OPEN; then
+            gh pr edit "${branch}" \
+              --title "Update ESPHome to ${LATEST}" \
+              --body-file /tmp/body.md
+          else
+            gh pr create \
+              --head "${branch}" \
+              --title "Update ESPHome to ${LATEST}" \
+              --body-file /tmp/body.md
+          fi

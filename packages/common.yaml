@@ -1,0 +1,27 @@
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: true
+
+logger:
+
+api:
+  encryption:
+
+ota:
+  - platform: esphome
+    id: ota_esphome
+
+safe_mode:
+
+wifi:
+  min_auth_mode: WPA2
+  # Only available in provisioning
+  ap:
+    ap_timeout: 0s
+
+captive_portal:
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time

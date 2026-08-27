@@ -1,0 +1,11 @@
+packages:
+  core: !include smart-ir-remote.yaml
+  updates: !include ../../packages/updates.yaml
+  provisioning: !include ../../packages/provisioning.yaml
+  improv: !include ../../packages/provisioning-esp32.yaml
+  signing: !include ../../packages/signing-esp32.yaml
+
+esphome:
+  project:
+    name: lafriks.xiao-smart-ir-mate
+    version: dev

@@ -1,0 +1,30 @@
+packages:
+  # Include all of the core configuration.
+  core: !include tc001.yaml
+  # OTA updates from GitHub Pages.
+  updates: !include ../../packages/updates.yaml
+  # Time-limited window for Wi-Fi credential and API key provisioning.
+  provisioning: !include ../../packages/provisioning.yaml
+  # Improv Wi-Fi provisioning over BLE and USB serial.
+  improv: !include ../../packages/provisioning-esp32.yaml
+  # Only release-signed OTA images are accepted.
+  signing: !include ../../packages/signing-esp32.yaml
+
+esphome:
+  # This will allow for project identification, configuration and updates.
+  project:
+    name: lafriks.ulanzi-tc001
+    version: dev  # Replaced by the github workflows with the release version
+
+# The core config disables serial logging; Improv serial provisioning via the
+# USB-C port needs the UART active in the factory firmware.
+logger:
+  baud_rate: 115200
+
+# RSA-3072 signature verification (Secure Boot V2 scheme) requires ESP32
+# chip revision 3.0+. TC001 units ship with ECO3+ modules; if flashing ever
+# fails with a chip-revision error, switch the signing package to ecdsa_v1.
+esp32:
+  framework:
+    advanced:
+      minimum_chip_revision: "3.0"

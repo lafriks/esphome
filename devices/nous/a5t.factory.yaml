@@ -1,0 +1,13 @@
+packages:
+  core: !include a5t.yaml
+  updates: !include ../../packages/updates.yaml
+  provisioning: !include ../../packages/provisioning.yaml
+
+esphome:
+  project:
+    name: lafriks.nous-a5t
+    version: dev
+
+# ESP8266 cannot validate TLS certificates
+http_request:
+  verify_ssl: false

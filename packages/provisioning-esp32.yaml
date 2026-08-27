@@ -1,0 +1,8 @@
+# Wi-Fi provisioning for ESP32 factory firmware.
+
+# Bluetooth LE provisioning
+esp32_improv:
+  authorizer: none
+
+# Improv via the USB serial port
+improv_serial:

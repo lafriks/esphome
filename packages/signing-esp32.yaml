@@ -1,0 +1,8 @@
+# Signed OTA verification (factory firmware, ESP32 only).
+esp32:
+  framework:
+    advanced:
+      signed_ota_verification:
+        signing_scheme: rsa3072
+        verification_keys:
+          - ../../keys/ota_signing.pem

@@ -1,0 +1,22 @@
+name: Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Release Drafter"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_run' && 'release-drafter' || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build to Draft Release
+    uses: esphome/workflows/.github/workflows/build-to-draft-release.yml@0fdd5e311b7e744069166696072a1a9cbc5fbeb6  # 2026.8.1
+    with:
+      esphome-version: 2026.8.1
