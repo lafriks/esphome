@@ -47,7 +47,12 @@ jobs:
       - name: Fetch firmware files
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download --pattern '*' --dir output/firmware
+        run: |
+          if gh release view --json tagName --jq .tagName > /dev/null 2>&1; then
+            gh release download --pattern '*' --dir output/firmware
+          else
+            echo "::warning::No published release yet; deploying site without firmware files"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
