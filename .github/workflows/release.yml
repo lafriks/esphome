@@ -115,7 +115,7 @@ jobs:
             exit 0
           fi
           if [[ -z "${OTA_SIGNING_KEY}" ]]; then
-            echo "::error::OTA_SIGNING_KEY secret is not set; ESP32 devices would reject unsigned OTA images. Add the private key as a repository secret."
+            echo "::error::OTA_SIGNING_KEY secret is not set; ESP32 devices would reject unsigned OTA images. Add the private key to the release environment."
             exit 1
           fi
           pip install --quiet "esptool>=4.7,<5"
@@ -128,7 +128,11 @@ jobs:
             fi
             # A re-run of this workflow downloads already-signed images; skip
             # re-signing those (the md5 update below is idempotent either way).
-            if python3 -m espsecure signature_info_v2 "assets/${bin}" > /dev/null 2>&1; then
+            # verify_signature exits non-zero for unsigned images and images
+            # signed by a different key; do NOT use signature_info_v2 here -
+            # it exits 0 even when no signature block exists.
+            if python3 -m espsecure verify_signature --version 2 \
+                --keyfile "${key_file}" "assets/${bin}" > /dev/null 2>&1; then
               echo "${bin} is already signed"
             else
               echo "Signing ${bin}"
@@ -136,6 +140,9 @@ jobs:
                 --keyfile "${key_file}" \
                 --output "assets/${bin}.signed" "assets/${bin}"
               mv "assets/${bin}.signed" "assets/${bin}"
+              # Belt and braces: never publish an image that does not verify.
+              python3 -m espsecure verify_signature --version 2 \
+                --keyfile "${key_file}" "assets/${bin}"
             fi
             md5=$(md5sum "assets/${bin}" | head -c 32)
             # Refresh the standalone checksum assets the build uploaded, which
