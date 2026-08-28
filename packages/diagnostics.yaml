@@ -49,3 +49,4 @@ text_sensor:
       icon: mdi:wifi-settings
     mac_address:
       name: MAC Address
+      disabled_by_default: true
