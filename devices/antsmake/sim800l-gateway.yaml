@@ -105,17 +105,28 @@ uart:
 
           ESP_LOGD("gsm", "RX: %s", line.c_str());
 
+          auto mark_unregistered = [&]() {
+            if (!id(net_registered).has_state() || id(net_registered).state)
+              id(net_registered).publish_state(false);
+            if (id(gsm_registration).state != "Not registered")
+              id(gsm_registration).publish_state("Not registered");
+          };
+
           if (line.rfind("+CME ERROR: ", 0) == 0) {
             // Verbose SIM-related errors (the poll enables AT+CMEE=2).
             std::string err = line.substr(12);
             if (err.find("SIM not inserted") != std::string::npos) {
               if (id(sim_status).state != "No SIM") id(sim_status).publish_state("No SIM");
+              mark_unregistered();
             } else if (err.find("SIM PIN") != std::string::npos) {
               if (id(sim_status).state != "PIN required") id(sim_status).publish_state("PIN required");
+              mark_unregistered();
             } else if (err.find("SIM PUK") != std::string::npos) {
               if (id(sim_status).state != "PUK required") id(sim_status).publish_state("PUK required");
+              mark_unregistered();
             } else if (err.find("SIM failure") != std::string::npos) {
               if (id(sim_status).state != "SIM failure") id(sim_status).publish_state("SIM failure");
+              mark_unregistered();
             }
           } else if (line.rfind("+CPIN: ", 0) == 0) {
             std::string st = line.substr(7);
@@ -125,6 +136,8 @@ uart:
             else if (st == "SIM PUK") txt = "PUK required";
             else if (st == "NOT READY") txt = "Not ready";
             if (id(sim_status).state != txt) id(sim_status).publish_state(txt);
+            if (st != "READY")
+              mark_unregistered();
           } else if (line.find("SIM not inserted") != std::string::npos) {
             if (id(sim_status).state != "No SIM") id(sim_status).publish_state("No SIM");
           } else if (line.rfind("+COPS: ", 0) == 0) {
@@ -319,6 +332,7 @@ binary_sensor:
   - platform: sim800l
     sim800l_id: modem
     registered:
+      id: net_registered
       name: Network Registered
       entity_category: diagnostic
 
