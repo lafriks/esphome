@@ -1,0 +1,340 @@
+substitutions:
+  name: sim800l-gateway
+  friendly_name: SMS Gateway
+  # LILYGO T-Call v1.3 compatible pinout (ESP32-WROVER-B + SIM800L boards
+  # such as the ANTS MAKE one are T-Call clones)
+  modem_tx_pin: GPIO27
+  modem_rx_pin: GPIO26
+  modem_pwrkey_pin: GPIO4
+  modem_rst_pin: GPIO5
+  modem_power_pin: GPIO23
+  # On-board LED (T-Call v1.3 layout).
+  led_pin: GPIO13
+
+packages:
+  common: !include ../../packages/common.yaml
+  diagnostics: !include ../../packages/diagnostics.yaml
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+# ESP32-WROVER-B has 8MB PSRAM on board.
+psram:
+
+esphome:
+  on_boot:
+    - priority: 600
+      then:
+        - output.turn_on: modem_power
+        - output.turn_on: modem_rst
+        - output.turn_off: modem_pwrkey
+    # Factory reset gesture
+    - priority: 600
+      then:
+        - lambda: |-
+            if (esp_reset_reason() == ESP_RST_POWERON) {
+              auto pref = global_preferences->make_preference<int>(0x51424354);
+              int count = 0;
+              pref.load(&count);
+              count += 1;
+              ESP_LOGI("factory_reset", "Quick power-cycle count: %d/3", count);
+              if (count >= 3)
+                count = 0;
+              pref.save(&count);
+              global_preferences->sync();
+              if (count == 0)
+                id(factory_reset_warn).execute();
+            }
+        - delay: 10s
+        - lambda: |-
+            auto pref = global_preferences->make_preference<int>(0x51424354);
+            int count = 0;
+            if (pref.load(&count) && count != 0) {
+              count = 0;
+              pref.save(&count);
+              global_preferences->sync();
+            }
+
+output:
+  - platform: gpio
+    id: modem_power
+    pin: ${modem_power_pin}
+  - platform: gpio
+    id: modem_rst
+    pin: ${modem_rst_pin}
+  - platform: gpio
+    id: modem_pwrkey
+    pin: ${modem_pwrkey_pin}
+
+uart:
+  id: modem_uart
+  tx_pin: ${modem_tx_pin}
+  rx_pin: ${modem_rx_pin}
+  baud_rate: 9600
+  # Passive sniffer on the modem's replies.
+  debug:
+    direction: RX
+    after:
+      delimiter: "\n"
+    sequence:
+      - lambda: |-
+          // A chunk may hold several lines and stray leading/trailing CR/LF,
+          // so split and trim before matching prefixes.
+          std::string chunk(bytes.begin(), bytes.end());
+          size_t start = 0;
+          while (start < chunk.size()) {
+          size_t end = chunk.find('\n', start);
+          std::string line = chunk.substr(
+              start, end == std::string::npos ? std::string::npos : end - start);
+          start = (end == std::string::npos) ? chunk.size() : end + 1;
+          while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+            line.pop_back();
+          while (!line.empty() && (line.front() == '\r' || line.front() == '\n'))
+            line.erase(0, 1);
+          if (line.empty() || line == "OK" || line == "ERROR")
+            continue;
+
+          ESP_LOGD("gsm", "RX: %s", line.c_str());
+
+          if (line.rfind("+CME ERROR: ", 0) == 0) {
+            // Verbose SIM-related errors (the poll enables AT+CMEE=2).
+            std::string err = line.substr(12);
+            if (err.find("SIM not inserted") != std::string::npos) {
+              if (id(sim_status).state != "No SIM") id(sim_status).publish_state("No SIM");
+            } else if (err.find("SIM PIN") != std::string::npos) {
+              if (id(sim_status).state != "PIN required") id(sim_status).publish_state("PIN required");
+            } else if (err.find("SIM PUK") != std::string::npos) {
+              if (id(sim_status).state != "PUK required") id(sim_status).publish_state("PUK required");
+            } else if (err.find("SIM failure") != std::string::npos) {
+              if (id(sim_status).state != "SIM failure") id(sim_status).publish_state("SIM failure");
+            }
+          } else if (line.rfind("+CPIN: ", 0) == 0) {
+            std::string st = line.substr(7);
+            std::string txt = st;
+            if (st == "READY") txt = "Ready";
+            else if (st == "SIM PIN") txt = "PIN required";
+            else if (st == "SIM PUK") txt = "PUK required";
+            else if (st == "NOT READY") txt = "Not ready";
+            if (id(sim_status).state != txt) id(sim_status).publish_state(txt);
+          } else if (line.find("SIM not inserted") != std::string::npos) {
+            if (id(sim_status).state != "No SIM") id(sim_status).publish_state("No SIM");
+          } else if (line.rfind("+COPS: ", 0) == 0) {
+            // +COPS: 0,0,"Operator" (no quoted name while unregistered)
+            std::string op = "Not registered";
+            size_t q1 = line.find('"');
+            size_t q2 = q1 == std::string::npos ? std::string::npos : line.find('"', q1 + 1);
+            if (q1 != std::string::npos && q2 != std::string::npos)
+              op = line.substr(q1 + 1, q2 - q1 - 1);
+            if (id(gsm_operator).state != op) id(gsm_operator).publish_state(op);
+          } else if (line.rfind("Revision:", 0) == 0) {
+            // AT+CGMR reply, e.g. "Revision:1418B05SIM800L24".
+            std::string rev = line.substr(9);
+            while (!rev.empty() && rev.front() == ' ')
+              rev.erase(0, 1);
+            if (!rev.empty() && id(modem_firmware).state != rev)
+              id(modem_firmware).publish_state(rev);
+          } else if (line.rfind("+CREG: ", 0) == 0) {
+            // Response form "+CREG: <mode>,<stat>" or unsolicited "+CREG: <stat>";
+            // the sim800l component polls this periodically on its own.
+            std::string rest = line.substr(7);
+            char stat = (rest.size() >= 3 && rest[1] == ',') ? rest[2] : rest[0];
+            const char *txt;
+            switch (stat) {
+              case '1': txt = "Home network"; break;
+              case '2': txt = "Searching"; break;
+              case '3': txt = "Registration denied"; break;
+              case '5': txt = "Roaming"; break;
+              default: txt = "Not registered"; break;
+            }
+            if (id(gsm_registration).state != txt) id(gsm_registration).publish_state(txt);
+          }
+          }
+
+globals:
+  - id: last_modem_cmd
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+wifi:
+  on_connect:
+    - light.turn_off: status_light
+
+interval:
+  # Slow-blink the blue LED while Wi-Fi is not connected
+  - id: wifi_status_blink
+    interval: 1s
+    then:
+      - if:
+          condition:
+            not:
+              wifi.connected:
+          then:
+            - light.toggle: status_light
+
+  - id: gsm_diag_poll
+    interval: 60s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return (millis() - id(last_modem_cmd)) > 30000 &&
+                     !id(dial_watchdog).is_running();
+          then:
+            - uart.write:
+                id: modem_uart
+                data: "AT+CMEE=2\r\n"
+            - delay: 1s
+            - uart.write:
+                id: modem_uart
+                data: "AT+CPIN?\r\n"
+            - delay: 2s
+            - uart.write:
+                id: modem_uart
+                data: "AT+COPS?\r\n"
+            - if:
+                condition:
+                  lambda: return id(modem_firmware).state.empty();
+                then:
+                  - delay: 2s
+                  - uart.write:
+                      id: modem_uart
+                      data: "AT+CGMR\r\n"
+
+sim800l:
+  id: modem
+  uart_id: modem_uart
+  # Incoming calls are never answered
+  on_incoming_call:
+    - lambda: id(last_modem_cmd) = millis();
+    - homeassistant.event:
+        event: esphome.sim800l_incoming_call
+        data_template:
+          caller: "{{ caller }}"
+        variables:
+          caller: !lambda return caller_id;
+    - sim800l.disconnect:
+        id: modem
+  on_sms_received:
+    - homeassistant.event:
+        event: esphome.sim800l_sms_received
+        data_template:
+          sender: "{{ sender }}"
+          message: "{{ message }}"
+        variables:
+          sender: !lambda return sender;
+          message: !lambda return message;
+  # Hang up on outgoing calls as soon as the callee answers
+  on_call_connected:
+    - script.stop: dial_watchdog
+    - sim800l.disconnect:
+        id: modem
+  on_call_disconnected:
+    - script.stop: dial_watchdog
+
+api:
+  actions:
+    - action: unlock_sim
+      variables:
+        pin: string
+      then:
+        - lambda: id(last_modem_cmd) = millis();
+        - uart.write:
+            id: modem_uart
+            data: !lambda |-
+              std::string cmd = "AT+CPIN=\"" + pin + "\"\r\n";
+              return std::vector<uint8_t>(cmd.begin(), cmd.end());
+
+    - action: send_sms
+      variables:
+        recipient: string
+        message: string
+      then:
+        - lambda: id(last_modem_cmd) = millis();
+        - sim800l.send_sms:
+            id: modem
+            recipient: !lambda return recipient;
+            message: !lambda return message;
+
+    - action: dial
+      variables:
+        recipient: string
+      then:
+        - lambda: id(last_modem_cmd) = millis();
+        - script.execute: dial_watchdog
+        - sim800l.dial:
+            id: modem
+            recipient: !lambda return recipient;
+
+    # - action: hangup
+    #   then:
+    #     - lambda: id(last_modem_cmd) = millis();
+    #     - script.stop: dial_watchdog
+    #     - sim800l.disconnect:
+    #         id: modem
+
+script:
+  - id: factory_reset_warn
+    then:
+      - repeat:
+          count: 6
+          then:
+            - light.turn_on: status_light
+            - delay: 150ms
+            - light.turn_off: status_light
+            - delay: 150ms
+      - button.press: factory_reset_button
+
+  # Aborts an unanswered outgoing call
+  - id: dial_watchdog
+    mode: restart
+    then:
+      - delay: 45s
+      - sim800l.disconnect:
+          id: modem
+
+light:
+  - platform: status_led
+    id: status_light
+    name: Status LED
+    disabled_by_default: true
+    pin: ${led_pin}
+
+binary_sensor:
+  - platform: sim800l
+    sim800l_id: modem
+    registered:
+      name: Network Registered
+      entity_category: diagnostic
+
+sensor:
+  - platform: sim800l
+    sim800l_id: modem
+    rssi:
+      name: Signal Strength
+      entity_category: diagnostic
+
+# GSM diagnostics
+text_sensor:
+  - platform: template
+    id: sim_status
+    name: SIM Status
+    icon: mdi:sim
+    entity_category: diagnostic
+  - platform: template
+    id: gsm_operator
+    name: Operator
+    icon: mdi:antenna
+    entity_category: diagnostic
+  - platform: template
+    id: gsm_registration
+    name: Network Registration
+    icon: mdi:signal-cellular-2
+    entity_category: diagnostic
+  - platform: template
+    id: modem_firmware
+    name: Modem Firmware
+    icon: mdi:chip
+    entity_category: diagnostic

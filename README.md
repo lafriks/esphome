@@ -49,6 +49,9 @@ provisioning AP. Each device warns before wiping:
 - **Nous A5T**: hold the main power button >=5s (button LED blinks)
 - **Ulanzi TC001**: hold the middle button >=5s (on-screen warning + beep)
 - **XIAO Smart IR Mate**: hold the side button (D9) >=5s (long vibration + red blinking)
+- **SIM800L gateway**: press RST / cycle power 3 times in a row, each within
+  10s of boot (status LED blinks; the board's only button is a hardware RST
+  line invisible to firmware)
 
 Data flows from Home Assistant to devices by HA calling device actions rather
 than devices importing HA entities, so no HA entity ids are baked into the
@@ -67,3 +70,11 @@ its clock screen and HA pushes everything else via `show_weather`,
 - **Ulanzi TC001**: factory firmware enables serial logging for Improv over
   USB-C; the core config keeps `baud_rate: 0`.
 - **XIAO Smart IR Mate**: Improv BLE + serial via the USB-C port.
+- **SIM800L gateway** (ESP32-WROVER-B + SIM800L, T-Call v1.3 pinout): SMS and
+  call control via HA actions (`unlock_sim`, `send_sms`, `dial`, `hangup`) and
+  HA events (`esphome.sim800l_sms_received`, `esphome.sim800l_incoming_call`);
+  incoming calls are hung up automatically, outgoing calls hang up on answer
+  with a 45s no-answer watchdog. The SIM PIN is pushed from HA, never stored
+  in firmware. Requires "Allow the device to perform Home Assistant actions"
+  in the HA ESPHome integration options. OTA images are not signed: the board's
+  ESP32 is chip revision v1.1.

@@ -1,0 +1,10 @@
+packages:
+  core: !include sim800l-gateway.yaml
+  updates: !include ../../packages/updates.yaml
+  provisioning: !include ../../packages/provisioning.yaml
+  improv: !include ../../packages/provisioning-esp32.yaml
+
+esphome:
+  project:
+    name: lafriks.sim800l-gateway
+    version: dev
