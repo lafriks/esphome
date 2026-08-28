@@ -268,12 +268,12 @@ api:
             id: modem
             recipient: !lambda return recipient;
 
-    # - action: hangup
-    #   then:
-    #     - lambda: id(last_modem_cmd) = millis();
-    #     - script.stop: dial_watchdog
-    #     - sim800l.disconnect:
-    #         id: modem
+# TODO: Manual hangup disabled
+#   then:
+#     - lambda: id(last_modem_cmd) = millis();
+#     - script.stop: dial_watchdog
+#     - sim800l.disconnect:
+#         id: modem
 
 script:
   - id: factory_reset_warn
