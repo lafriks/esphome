@@ -1,0 +1,3 @@
+# Devices whose OTA images are signed with the legacy Secure Boot V1 ECDSA
+# scheme instead of the default V2 rsa3072 scheme.
+sim800l-gateway

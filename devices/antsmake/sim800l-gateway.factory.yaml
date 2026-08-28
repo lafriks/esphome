@@ -8,3 +8,11 @@ esphome:
   project:
     name: lafriks.sim800l-gateway
     version: dev
+
+# Signed OTA verification via the legacy Secure Boot V1 ECDSA scheme
+esp32:
+  framework:
+    advanced:
+      signed_ota_verification:
+        signing_scheme: ecdsa_v1
+        verification_key: ../../keys/ota_signing_v1.pub.bin

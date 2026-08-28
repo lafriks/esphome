@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
       - name: Resolve draft release
         id: find
         env:
@@ -101,12 +104,28 @@ jobs:
       - name: Sign ESP32 OTA images
         env:
           OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+          OTA_SIGNING_KEY_V1: ${{ secrets.OTA_SIGNING_KEY_V1 }}
         run: |
           set -euo pipefail
-          # The ESP32 factory firmware only boots OTA images carrying a valid
-          # RSA-3072 signature (see packages/signing-esp32.yaml), so every
-          # ESP32-family *.ota.bin must be signed before the release goes out.
+          # ESP32 factory firmware only boots OTA images carrying a valid
+          # signature, so every ESP32-family *.ota.bin must be signed before
+          # the release goes out. Most devices use the Secure Boot V2 rsa3072
+          # scheme (packages/signing-esp32.yaml, OTA_SIGNING_KEY); devices on
+          # pre-3.0 ESP32 silicon use the legacy V1 ECDSA scheme
+          # (OTA_SIGNING_KEY_V1) and are listed in
+          # .github/ota-signing-v1-devices.txt.
           # ESP8266 images are skipped: no signing support on that platform.
+          V1_DEVICES=$(grep -vE '^\s*(#|$)' .github/ota-signing-v1-devices.txt || true)
+          scheme_for() {
+            local d
+            for d in ${V1_DEVICES}; do
+              if [[ "$1" == "${d}"-* || "$1" == "${d}".* ]]; then
+                echo 1
+                return
+              fi
+            done
+            echo 2
+          }
           mapfile -t targets < <(
             jq -r '.builds[] | select(.ota != null and (.chipFamily | startswith("ESP8266") | not)) | .ota.path' \
               assets/*.manifest.json | sort -u)
@@ -114,16 +133,28 @@ jobs:
             echo "No ESP32 OTA images to sign"
             exit 0
           fi
-          if [[ -z "${OTA_SIGNING_KEY}" ]]; then
-            echo "::error::OTA_SIGNING_KEY secret is not set; ESP32 devices would reject unsigned OTA images. Add the private key to the release environment."
-            exit 1
-          fi
           pip install --quiet "esptool>=4.7,<5"
-          key_file=$(mktemp)
-          printf '%s\n' "${OTA_SIGNING_KEY}" > "${key_file}"
+          key_file_v2=$(mktemp)
+          key_file_v1=$(mktemp)
+          printf '%s\n' "${OTA_SIGNING_KEY}" > "${key_file_v2}"
+          printf '%s\n' "${OTA_SIGNING_KEY_V1}" > "${key_file_v1}"
           for bin in "${targets[@]}"; do
             if [[ ! -f "assets/${bin}" ]]; then
               echo "::error::Manifest references ${bin} but it is not a draft release asset"
+              exit 1
+            fi
+            scheme=$(scheme_for "${bin}")
+            if [[ "${scheme}" == "1" ]]; then
+              key_file="${key_file_v1}"
+              secret_name=OTA_SIGNING_KEY_V1
+              secret_value="${OTA_SIGNING_KEY_V1}"
+            else
+              key_file="${key_file_v2}"
+              secret_name=OTA_SIGNING_KEY
+              secret_value="${OTA_SIGNING_KEY}"
+            fi
+            if [[ -z "${secret_value}" ]]; then
+              echo "::error::${secret_name} secret is not set; ${bin} would be rejected by its device. Add the private key to the release environment."
               exit 1
             fi
             # A re-run of this workflow downloads already-signed images; skip
@@ -131,17 +162,17 @@ jobs:
             # verify_signature exits non-zero for unsigned images and images
             # signed by a different key; do NOT use signature_info_v2 here -
             # it exits 0 even when no signature block exists.
-            if python3 -m espsecure verify_signature --version 2 \
+            if python3 -m espsecure verify_signature --version "${scheme}" \
                 --keyfile "${key_file}" "assets/${bin}" > /dev/null 2>&1; then
-              echo "${bin} is already signed"
+              echo "${bin} is already signed (v${scheme})"
             else
-              echo "Signing ${bin}"
-              python3 -m espsecure sign_data --version 2 \
+              echo "Signing ${bin} (v${scheme})"
+              python3 -m espsecure sign_data --version "${scheme}" \
                 --keyfile "${key_file}" \
                 --output "assets/${bin}.signed" "assets/${bin}"
               mv "assets/${bin}.signed" "assets/${bin}"
               # Belt and braces: never publish an image that does not verify.
-              python3 -m espsecure verify_signature --version 2 \
+              python3 -m espsecure verify_signature --version "${scheme}" \
                 --keyfile "${key_file}" "assets/${bin}"
             fi
             md5=$(md5sum "assets/${bin}" | head -c 32)
@@ -156,7 +187,7 @@ jobs:
               mv "${manifest}.tmp" "${manifest}"
             done
           done
-          rm -f "${key_file}"
+          rm -f "${key_file_v2}" "${key_file_v1}"
 
       - name: Patch manifests with current release body
         env:
