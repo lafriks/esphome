@@ -77,4 +77,5 @@ its clock screen and HA pushes everything else via `show_weather`,
   with a 45s no-answer watchdog. The SIM PIN is pushed from HA, never stored
   in firmware. Requires "Allow the device to perform Home Assistant actions"
   in the HA ESPHome integration options. OTA images are not signed: the board's
-  ESP32 is chip revision v1.1.
+  ESP32 is chip revision v1.1. Battery level/charging sensors read the IP5306
+  power IC over I2C.

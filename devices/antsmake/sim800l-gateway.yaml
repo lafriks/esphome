@@ -8,12 +8,19 @@ substitutions:
   modem_pwrkey_pin: GPIO4
   modem_rst_pin: GPIO5
   modem_power_pin: GPIO23
-  # On-board LED (T-Call v1.3 layout).
+  # On-board LED
   led_pin: GPIO13
+  # IP5306 battery management IC I2C bus
+  pmu_sda_pin: GPIO21
+  pmu_scl_pin: GPIO22
 
 packages:
   common: !include ../../packages/common.yaml
   diagnostics: !include ../../packages/diagnostics.yaml
+
+logger:
+  logs:
+    status_led: INFO
 
 esp32:
   board: esp32dev
@@ -151,6 +158,12 @@ uart:
             if (id(gsm_registration).state != txt) id(gsm_registration).publish_state(txt);
           }
           }
+
+i2c:
+  id: pmu_bus
+  sda: ${pmu_sda_pin}
+  scl: ${pmu_scl_pin}
+  scan: true
 
 globals:
   - id: last_modem_cmd
@@ -309,12 +322,45 @@ binary_sensor:
       name: Network Registered
       entity_category: diagnostic
 
+  - platform: template
+    id: battery_charging
+    name: Battery Charging
+    device_class: battery_charging
+
 sensor:
   - platform: sim800l
     sim800l_id: modem
     rssi:
       name: Signal Strength
       entity_category: diagnostic
+
+  - platform: template
+    id: battery_level
+    name: Battery Level
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      uint8_t reg = 0x70, status = 0;
+      if (id(pmu_bus)->write(0x75, &reg, 1) == i2c::ERROR_OK &&
+          id(pmu_bus)->read(0x75, &status, 1) == i2c::ERROR_OK) {
+        id(battery_charging).publish_state((status & 0x08) != 0);
+      }
+      uint8_t level = 0;
+      reg = 0x78;
+      if (id(pmu_bus)->write(0x75, &reg, 1) != i2c::ERROR_OK ||
+          id(pmu_bus)->read(0x75, &level, 1) != i2c::ERROR_OK) {
+        return NAN;
+      }
+      switch (level & 0xF0) {
+        case 0xE0: return 25;
+        case 0xC0: return 50;
+        case 0x80: return 75;
+        case 0x00: return 100;
+        default: return NAN;
+      }
 
 # GSM diagnostics
 text_sensor:
