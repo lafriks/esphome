@@ -4,6 +4,7 @@ binary_sensor:
     id: api_connection
     name: API Connection
     device_class: connectivity
+    disabled_by_default: true
     filters:
       - delayed_on: 1s
 
@@ -44,9 +45,11 @@ text_sensor:
     ssid:
       name: Connected SSID
       icon: mdi:wifi-settings
+      disabled_by_default: true
     bssid:
       name: Connected BSSID
       icon: mdi:wifi-settings
+      disabled_by_default: true
     mac_address:
       name: MAC Address
       disabled_by_default: true

@@ -388,6 +388,7 @@ text_sensor:
     name: Operator
     icon: mdi:antenna
     entity_category: diagnostic
+    disabled_by_default: true
   - platform: template
     id: gsm_registration
     name: Network Registration
@@ -398,3 +399,4 @@ text_sensor:
     name: Modem Firmware
     icon: mdi:chip
     entity_category: diagnostic
+    disabled_by_default: true
