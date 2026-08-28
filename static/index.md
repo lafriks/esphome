@@ -26,6 +26,13 @@ temperature/humidity sensors
 
 <esp-web-install-button manifest="firmware/ulanzi-tc001.manifest.json"></esp-web-install-button>
 
+## SIM800L SMS gateway
+
+ESP32-WROVER-B + SIM800L board (LILYGO T-Call v1.3 compatible): SMS in/out,
+incoming-call caller ID and ring notifications, driven from Home Assistant.
+
+<esp-web-install-button manifest="firmware/sim800l-gateway.manifest.json"></esp-web-install-button>
+
 ## Seeed XIAO Smart IR Mate
 
 Compact infrared remote hub for Home Assistant with 360° IR emitters, IR

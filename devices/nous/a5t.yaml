@@ -83,6 +83,21 @@ light:
       inverted: true
       number: GPIO2
 
+wifi:
+  on_connect:
+    - light.turn_off: blue_led
+
+interval:
+  - id: wifi_status_blink
+    interval: 1s
+    then:
+      - if:
+          condition:
+            not:
+              wifi.connected:
+          then:
+            - light.toggle: blue_led
+
 switch:
   - platform: gpio
     name: Switch 1

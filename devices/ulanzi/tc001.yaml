@@ -42,6 +42,10 @@ esp32_ble_tracker:
 bluetooth_proxy:
   active: true
 
+wifi:
+  on_connect:
+    - script.execute: show_clock
+
 api:
   custom_services: true
 
@@ -185,8 +189,9 @@ interval:
     then:
       - if:
           condition:
-            not:
-              wifi.connected:
+            lambda: |-
+              return wifi::global_wifi_component->has_sta() &&
+                     !wifi::global_wifi_component->is_connected();
           then:
             - lambda: |-
                 static bool blink_on = false;
@@ -364,6 +369,13 @@ script:
           id(rgb8x32)->icon_clock("calendar|day#2", 1440, 10, false, 78,186,74);
           id(rgb8x32)->force_screen("calendar|day#2", 15);
 
+  - id: show_setup_info
+    then:
+      - lambda: |-
+          id(del_screens).execute();
+          id(rgb8x32)->icon_screen("internet", "Setup WiFi", 2, 20);
+          id(rgb8x32)->force_screen("internet", 5);
+
   - id: show_weather_screen
     parameters:
       condition: string
@@ -520,9 +532,17 @@ ehmtxv2:
         id(rgb8x32)->expand_icon_to_9(1);
         id(rgb8x32)->set_infotext_color(0,0,0, 0,0,0, false, 1);
         id(rgb8x32)->set_weekday_accent_on();
-        id(show_clock).execute();
+        if (wifi::global_wifi_component->has_sta()) {
+          id(show_clock).execute();
+        } else {
+          id(show_setup_info).execute();
+        }
 
   on_empty_queue:
     then:
       lambda: |-
-        id(show_clock).execute();
+        if (wifi::global_wifi_component->has_sta()) {
+          id(show_clock).execute();
+        } else {
+          id(show_setup_info).execute();
+        }

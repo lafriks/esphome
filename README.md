@@ -38,6 +38,8 @@ the API uses encryption without a key baked into the firmware. Per-device
 naming happens in Home Assistant, not in configs - this repo stays
 location-agnostic.
 
+Every device shows "no Wi-Fi" (provisioning mode or connection lost) visibly.
+
 The open provisioning AP exists **only while unprovisioned** (`ap_timeout: 0s`
 disables the fallback AP on later connection loss). Recovery on a provisioned
 device whose Wi-Fi is gone: Improv BLE (ESP32 devices) or the physical

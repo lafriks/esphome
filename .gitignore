@@ -6,3 +6,6 @@
 # OTA signing private key - only the public key (keys/) is committed;
 # the private key lives in the OTA_SIGNING_KEY GitHub Actions secret.
 /ota_signing_key.pem
+
+# Local test builds
+/*.factory.bin
