@@ -10,3 +10,8 @@ update:
     id: update_http_request
     name: Firmware
     source: https://lafriks.github.io/esphome/firmware/${name}.manifest.json
+
+wifi:
+  on_connect:
+    - delay: 5s
+    - component.update: update_http_request
