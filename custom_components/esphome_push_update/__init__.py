@@ -13,7 +13,7 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import async_call_later
 
 from .coordinator import MANIFEST_URL_OBJECT_ID, PushUpdateCoordinator
@@ -28,6 +28,14 @@ type PushUpdateConfigEntry = ConfigEntry[PushUpdateCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: PushUpdateConfigEntry) -> bool:
+    # This integration attaches its entities to the ESPHome integration's
+    # devices and never owns devices itself.
+    device_registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        device_registry.async_update_device(
+            device.id, remove_config_entry_id=entry.entry_id
+        )
+
     coordinator = PushUpdateCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator

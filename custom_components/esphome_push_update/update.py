@@ -16,7 +16,6 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -28,17 +27,23 @@ from .espota import OTAError, push_firmware
 _LOGGER = logging.getLogger(__name__)
 
 
-def _device_info_for(hass: HomeAssistant, esphome_entry_id: str) -> DeviceInfo | None:
-    """Device info linking the entity to the ESPHome integration's device.
+def _esphome_device_for(
+    hass: HomeAssistant, esphome_entry_id: str
+) -> dr.DeviceEntry | None:
+    """The ESPHome integration's main device entry for a config entry.
 
-    Must be resolved before the entity is added - HA assigns entities to
-    devices at registration time.
+    The entity attaches to this existing device by setting `device_entry`
+    directly (the switch_as_x pattern). Device-registry matching is scoped
+    per config entry since HA 2026, so registering our own DeviceInfo with
+    the same MAC would create a separate nameless device instead of linking.
     """
     registry = dr.async_get(hass)
-    for device in dr.async_entries_for_config_entry(registry, esphome_entry_id):
-        if device.connections:
-            return DeviceInfo(connections=device.connections)
-    return None
+    devices = dr.async_entries_for_config_entry(registry, esphome_entry_id)
+    for device in devices:
+        # Main device (ESPHome sub-devices hang off it via via_device_id).
+        if device.via_device_id is None and device.connections:
+            return device
+    return next(iter(devices), None)
 
 
 async def async_setup_entry(
@@ -53,7 +58,9 @@ async def async_setup_entry(
     def _sync_entities() -> None:
         new = [
             PushUpdateEntity(
-                coordinator, esphome_entry_id, _device_info_for(hass, esphome_entry_id)
+                coordinator,
+                esphome_entry_id,
+                _esphome_device_for(hass, esphome_entry_id),
             )
             for esphome_entry_id in (coordinator.data or {})
             if esphome_entry_id not in known
@@ -82,12 +89,13 @@ class PushUpdateEntity(CoordinatorEntity[PushUpdateCoordinator], UpdateEntity):
         self,
         coordinator: PushUpdateCoordinator,
         esphome_entry_id: str,
-        device_info: DeviceInfo | None,
+        device_entry: dr.DeviceEntry | None,
     ) -> None:
         super().__init__(coordinator)
         self.esphome_entry_id = esphome_entry_id
         self._attr_unique_id = f"{esphome_entry_id}_pushed_firmware"
-        self._attr_device_info = device_info
+        if device_entry is not None:
+            self.device_entry = device_entry
         self._installed_override: str | None = None
 
     @property
