@@ -60,13 +60,28 @@ holds) - they are exposed to HA for automations. E.g. the TC001 defaults to
 its clock screen and HA pushes everything else via `show_weather`,
 `show_weather_forecast`, `show_clock`, `notify` and `rtttl_play` actions.
 
+## HA push updates (custom_components/esphome_push_update)
+
+A zero-configuration Home Assistant custom integration for devices that
+cannot self-update. Such devices advertise their own firmware
+manifest URL via a "Firmware Manifest URL" text sensor
+(`packages/push-updates.yaml`).
+
+Install via HACS: HACS -> menu (⋮) -> Custom repositories -> add
+`https://github.com/lafriks/esphome` with type Integration, then install
+"ESPHome Push Update" and restart HA. Finally Settings -> Devices &
+services -> Add integration -> "ESPHome Push Update" (one instance, no
+settings - discovery is automatic).
+
 ## Notes per device
 
 - **Nous A5T** (ESP8285): no usable USB/BLE, so provisioning is via the
   provisioning AP + captive portal only and the factory-reset hold is the only
-  wireless recovery; `verify_ssl: false` because ESP8266 cannot validate the
-  GitHub Pages TLS certificate. OTA images are not signed (no platform
-  support).
+  wireless recovery. **No Pages self-updates**: 1MB flash caps a
+  self-updatable image at ~500KB and the HTTPS update stack pushes the image
+  well past that, so updates are pushed locally instead (single step - native
+  OTA transfers compressed): `esphome run devices/nous/a5t.factory.yaml
+  --device <ip>`. OTA images are not signed (no platform support).
 - **Ulanzi TC001**: factory firmware enables serial logging for Improv over
   USB-C; the core config keeps `baud_rate: 0`.
 - **XIAO Smart IR Mate**: Improv BLE + serial via the USB-C port.

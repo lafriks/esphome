@@ -13,7 +13,7 @@ packages:
 esphome:
   # This will allow for project identification, configuration and updates.
   project:
-    name: lafriks.ulanzi-tc001
+    name: "Ulanzi.TC001"
     version: dev  # Replaced by the github workflows with the release version
 
 # The core config disables serial logging; Improv serial provisioning via the

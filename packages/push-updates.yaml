@@ -1,0 +1,9 @@
+# For devices that cannot self-update
+text_sensor:
+  - platform: template
+    id: firmware_manifest_url
+    name: Firmware Manifest URL
+    icon: mdi:link
+    entity_category: diagnostic
+    update_interval: 6h
+    lambda: return {"https://lafriks.github.io/esphome/firmware/${name}.manifest.json"};

@@ -1,0 +1,13 @@
+{
+  "domain": "esphome_push_update",
+  "name": "ESPHome Push Update",
+  "codeowners": ["@lafriks"],
+  "config_flow": true,
+  "dependencies": ["esphome"],
+  "documentation": "https://github.com/lafriks/esphome",
+  "issue_tracker": "https://github.com/lafriks/esphome/issues",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "version": "1.0.0"
+}

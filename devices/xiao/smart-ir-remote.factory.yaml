@@ -7,5 +7,5 @@ packages:
 
 esphome:
   project:
-    name: lafriks.xiao-smart-ir-mate
+    name: "Seeed-Studio.XIAO-Smart-IR-Mate"
     version: dev

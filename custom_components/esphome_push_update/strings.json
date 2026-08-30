@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ESPHome Push Update",
+        "description": "Automatically discovers ESPHome devices that have a published firmware manifest but cannot self-update, and adds an update entity that pushes firmware to them."
+      }
+    },
+    "abort": {
+      "already_configured": "Already configured; a single instance discovers all devices"
+    }
+  }
+}

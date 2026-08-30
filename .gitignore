@@ -9,3 +9,8 @@
 
 # Local test builds
 /*.factory.bin
+
+*-transition.yaml
+/*.ota.bin
+/*.bin
+__pycache__/

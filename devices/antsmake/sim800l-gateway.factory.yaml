@@ -6,7 +6,7 @@ packages:
 
 esphome:
   project:
-    name: lafriks.sim800l-gateway
+    name: "ANTS-MAKE.SIM800L-Gateway"
     version: dev
 
 # Signed OTA verification via the legacy Secure Boot V1 ECDSA scheme
