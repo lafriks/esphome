@@ -11,6 +11,7 @@ from homeassistant.components.update import (
     UpdateEntity,
     UpdateEntityFeature,
 )
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
@@ -27,6 +28,19 @@ from .espota import OTAError, push_firmware
 _LOGGER = logging.getLogger(__name__)
 
 
+def _device_info_for(hass: HomeAssistant, esphome_entry_id: str) -> DeviceInfo | None:
+    """Device info linking the entity to the ESPHome integration's device.
+
+    Must be resolved before the entity is added - HA assigns entities to
+    devices at registration time.
+    """
+    registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(registry, esphome_entry_id):
+        if device.connections:
+            return DeviceInfo(connections=device.connections)
+    return None
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: PushUpdateConfigEntry,
@@ -38,7 +52,9 @@ async def async_setup_entry(
     @callback
     def _sync_entities() -> None:
         new = [
-            PushUpdateEntity(coordinator, esphome_entry_id)
+            PushUpdateEntity(
+                coordinator, esphome_entry_id, _device_info_for(hass, esphome_entry_id)
+            )
             for esphome_entry_id in (coordinator.data or {})
             if esphome_entry_id not in known
         ]
@@ -63,24 +79,16 @@ class PushUpdateEntity(CoordinatorEntity[PushUpdateCoordinator], UpdateEntity):
     _attr_name = "Firmware"
 
     def __init__(
-        self, coordinator: PushUpdateCoordinator, esphome_entry_id: str
+        self,
+        coordinator: PushUpdateCoordinator,
+        esphome_entry_id: str,
+        device_info: DeviceInfo | None,
     ) -> None:
         super().__init__(coordinator)
         self.esphome_entry_id = esphome_entry_id
         self._attr_unique_id = f"{esphome_entry_id}_pushed_firmware"
+        self._attr_device_info = device_info
         self._installed_override: str | None = None
-        self._attr_device_info: DeviceInfo | None = None
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        # Attach to the same HA device the ESPHome integration created.
-        registry = dr.async_get(self.hass)
-        for device in dr.async_entries_for_config_entry(
-            registry, self.esphome_entry_id
-        ):
-            if device.connections:
-                self._attr_device_info = DeviceInfo(connections=device.connections)
-                break
 
     @property
     def _info(self) -> DeviceUpdateInfo | None:
@@ -89,6 +97,24 @@ class PushUpdateEntity(CoordinatorEntity[PushUpdateCoordinator], UpdateEntity):
     @property
     def available(self) -> bool:
         return super().available and self._info is not None
+
+    @property
+    def state(self) -> str | None:
+        """Offer any published release to a device running a dev build.
+
+        HA's default AwesomeVersion comparison considers a release tag NOT
+        newer than the "dev" that locally-built firmware reports and would
+        show "up to date". Only that case is special-cased; release-to-release
+        comparisons keep HA's semantic versioning behavior (so a device on a
+        newer release than the manifest is not offered a downgrade).
+        """
+        installed = self.installed_version
+        if installed == "dev":
+            latest = self.latest_version
+            if latest is None:
+                return None
+            return STATE_ON if latest != installed else STATE_OFF
+        return super().state
 
     @property
     def installed_version(self) -> str | None:
