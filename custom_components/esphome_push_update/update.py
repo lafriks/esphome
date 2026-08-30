@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Mapping
 from typing import Any
 
+from awesomeversion import (
+    AwesomeVersion,
+    AwesomeVersionException,
+    AwesomeVersionStrategy,
+)
 from homeassistant.components.update import (
     UpdateDeviceClass,
     UpdateEntity,
     UpdateEntityFeature,
 )
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -27,16 +33,29 @@ from .espota import OTAError, push_firmware
 _LOGGER = logging.getLogger(__name__)
 
 
+def _version_order(version: str) -> tuple[AwesomeVersion, int] | None:
+    """Sortable key for release tags: <esphome version>[-<build N>]."""
+    base, sep, suffix = version.partition("-")
+    build = 0
+    if sep:
+        if not suffix.isdigit():
+            return None
+        build = int(suffix)
+    parsed = AwesomeVersion(base)
+    if parsed.strategy in (
+        AwesomeVersionStrategy.UNKNOWN,
+        # "dev" parses as a special container that compares as newest;
+        # a local dev build must instead always be offered the manifest.
+        AwesomeVersionStrategy.SPECIALCONTAINER,
+    ):
+        return None
+    return (parsed, build)
+
+
 def _esphome_device_for(
     hass: HomeAssistant, esphome_entry_id: str
 ) -> dr.DeviceEntry | None:
-    """The ESPHome integration's main device entry for a config entry.
-
-    The entity attaches to this existing device by setting `device_entry`
-    directly (the switch_as_x pattern). Device-registry matching is scoped
-    per config entry since HA 2026, so registering our own DeviceInfo with
-    the same MAC would create a separate nameless device instead of linking.
-    """
+    """The ESPHome integration's main device entry for a config entry."""
     registry = dr.async_get(hass)
     devices = dr.async_entries_for_config_entry(registry, esphome_entry_id)
     for device in devices:
@@ -98,6 +117,29 @@ class PushUpdateEntity(CoordinatorEntity[PushUpdateCoordinator], UpdateEntity):
             self.device_entry = device_entry
         self._installed_override: str | None = None
 
+    async def async_added_to_hass(self) -> None:
+        """Re-render when the ESPHome device reconnects."""
+        await super().async_added_to_hass()
+        if self.device_entry is None:
+            return
+        device_id = self.device_entry.id
+
+        @callback
+        def _device_updated(event: Event) -> None:
+            self.async_write_ha_state()
+
+        @callback
+        def _only_own_device(event_data: Mapping[str, Any]) -> bool:
+            return event_data.get("device_id") == device_id
+
+        self.async_on_remove(
+            self.hass.bus.async_listen(
+                dr.EVENT_DEVICE_REGISTRY_UPDATED,
+                _device_updated,
+                event_filter=_only_own_device,
+            )
+        )
+
     @property
     def _info(self) -> DeviceUpdateInfo | None:
         return (self.coordinator.data or {}).get(self.esphome_entry_id)
@@ -108,21 +150,21 @@ class PushUpdateEntity(CoordinatorEntity[PushUpdateCoordinator], UpdateEntity):
 
     @property
     def state(self) -> str | None:
-        """Offer any published release to a device running a dev build.
-
-        HA's default AwesomeVersion comparison considers a release tag NOT
-        newer than the "dev" that locally-built firmware reports and would
-        show "up to date". Only that case is special-cased; release-to-release
-        comparisons keep HA's semantic versioning behavior (so a device on a
-        newer release than the manifest is not offered a downgrade).
-        """
+        """Offer an update when the manifest version is newer than installed."""
         installed = self.installed_version
-        if installed == "dev":
-            latest = self.latest_version
-            if latest is None:
-                return None
-            return STATE_ON if latest != installed else STATE_OFF
-        return super().state
+        latest = self.latest_version
+        if installed is None or latest is None:
+            return None
+        if latest == installed:
+            return STATE_OFF
+        installed_key = _version_order(installed)
+        latest_key = _version_order(latest)
+        if installed_key is None or latest_key is None:
+            return STATE_ON
+        try:
+            return STATE_ON if latest_key > installed_key else STATE_OFF
+        except AwesomeVersionException:
+            return STATE_ON
 
     @property
     def installed_version(self) -> str | None:
@@ -132,7 +174,17 @@ class PushUpdateEntity(CoordinatorEntity[PushUpdateCoordinator], UpdateEntity):
         )
         runtime = getattr(esphome_entry, "runtime_data", None)
         device_info = getattr(runtime, "device_info", None)
-        return getattr(device_info, "project_version", None) or self._installed_override
+        version = getattr(device_info, "project_version", None)
+        if self._installed_override is not None:
+            if version == self._installed_override:
+                # ESPHome reconnected and reports the pushed version - the
+                # optimistic override has served its purpose.
+                self._installed_override = None
+            else:
+                # Right after a push ESPHome still caches the pre-update
+                # version until the device reboots and reconnects.
+                return self._installed_override
+        return version
 
     @property
     def latest_version(self) -> str | None:
