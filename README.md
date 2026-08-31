@@ -5,9 +5,10 @@ published to GitHub Pages: <https://lafriks.github.io/esphome/>
 
 No secrets are baked into the firmware. Devices are provisioned at runtime
 (Improv BLE / Improv serial / captive-portal fallback AP) and then stay on
-this universal firmware permanently: Home Assistant installs updates pulled
-from the GitHub Pages site. There is no ESPHome dashboard adoption or
-per-device rebuilding.
+this universal firmware permanently: devices self-update from the GitHub
+Pages site, and devices that cannot self-update get firmware pushed by Home
+Assistant (see below). There is no ESPHome dashboard adoption or per-device
+rebuilding.
 
 ## Repository layout
 
@@ -17,6 +18,7 @@ devices/<vendor>/<model>.factory.yaml  Universal firmware built by CI (core + pr
 packages/common.yaml                   Base: naming (+MAC suffix), api (encryption, HA-provisioned key), logger, ota, safe_mode, wifi AP + captive portal, HA time
 packages/diagnostics.yaml              Shared diagnostics: uptime, RSSI, IP/SSID/BSSID/MAC, API status, restart & factory-reset buttons
 packages/updates.yaml                  http_request OTA + update entity pulling the GitHub Pages manifest
+packages/push-updates.yaml             Manifest-URL text sensor for HA-pushed updates (devices that cannot self-update)
 packages/provisioning.yaml             Provisioning window (15 min) for Wi-Fi credentials + API encryption key
 packages/provisioning-esp32.yaml       Improv BLE + Improv serial (ESP32-only)
 packages/signing-esp32.yaml            Signed OTA verification (ESP32-only): only release-signed images are accepted
@@ -65,7 +67,12 @@ its clock screen and HA pushes everything else via `show_weather`,
 A zero-configuration Home Assistant custom integration for devices that
 cannot self-update. Such devices advertise their own firmware
 manifest URL via a "Firmware Manifest URL" text sensor
-(`packages/push-updates.yaml`).
+(`packages/push-updates.yaml`). Each discovered device gets a "Firmware"
+update entity on its ESPHome device page showing installed and latest
+versions; pressing Install downloads the release image from GitHub Pages,
+verifies its checksum and pushes it to the device over the native ESPHome
+OTA protocol with live progress. Nothing is ever installed without the user
+confirming.
 
 Install via HACS: HACS -> menu (⋮) -> Custom repositories -> add
 `https://github.com/lafriks/esphome` with type Integration, then install
@@ -77,20 +84,22 @@ settings - discovery is automatic).
 
 - **Nous A5T** (ESP8285): no usable USB/BLE, so provisioning is via the
   provisioning AP + captive portal only and the factory-reset hold is the only
-  wireless recovery. **No Pages self-updates**: 1MB flash caps a
-  self-updatable image at ~500KB and the HTTPS update stack pushes the image
-  well past that, so updates are pushed locally instead (single step - native
-  OTA transfers compressed): `esphome run devices/nous/a5t.factory.yaml
-  --device <ip>`. OTA images are not signed (no platform support).
+  wireless recovery. **No self-updates**: 1MB flash caps a self-updatable
+  image at ~500KB and the HTTPS update stack pushes the image well past that,
+  so the device only advertises its manifest URL and Home Assistant pushes
+  updates to it via the ESPHome Push Update integration (above). Manual
+  fallback (native OTA transfers compressed, so it fits in one step):
+  `esphome run devices/nous/a5t.factory.yaml --device <ip>`. OTA images are
+  not signed (ESP8266 has no signed-OTA support).
 - **Ulanzi TC001**: factory firmware enables serial logging for Improv over
   USB-C; the core config keeps `baud_rate: 0`.
 - **XIAO Smart IR Mate**: Improv BLE + serial via the USB-C port.
 - **SIM800L gateway** (ESP32-WROVER-B + SIM800L, T-Call v1.3 pinout): SMS and
-  call control via HA actions (`unlock_sim`, `send_sms`, `dial`, `hangup`) and
+  call control via HA actions (`unlock_sim`, `send_sms`, `dial`) and
   HA events (`esphome.sim800l_sms_received`, `esphome.sim800l_incoming_call`);
   incoming calls are hung up automatically, outgoing calls hang up on answer
   with a 45s no-answer watchdog. The SIM PIN is pushed from HA, never stored
   in firmware. Requires "Allow the device to perform Home Assistant actions"
   in the HA ESPHome integration options. OTA images are signed with the legacy
-  Secure Boot V1 ECDSA scheme. Battery
-  level/charging sensors read the IP5306 power IC over I2C.
+  Secure Boot V1 ECDSA scheme (the rev-1.1 chip cannot verify rsa3072).
+  Battery level/charging sensors read the IP5306 power IC over I2C.
