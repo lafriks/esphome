@@ -42,16 +42,19 @@ jobs:
           fi
 
           # Highest existing sequence (draft or published) for this base
-          # version: the bare tag counts as 1, `<base>-N` counts as N.
+          # version: the bare tag counts as 1, `<base>.N` counts as N. The
+          # dotted suffix keeps tags comparable by HA's semantic version
+          # checker (a -N suffix would parse as a semver pre-release and
+          # sort BEFORE the bare tag).
           latest_seq=$(jq -r --arg base "${base}" \
             '[.[] | .tag_name
-              | select(. == $base or startswith($base + "-"))
-              | if . == $base then 1 else (ltrimstr($base + "-") | tonumber?) end
+              | select(. == $base or startswith($base + "."))
+              | if . == $base then 1 else (ltrimstr($base + ".") | tonumber?) end
               | select(. != null)]
              | max // 0' <<< "${releases}")
 
           tag_for_seq() {
-            if [[ "$1" -le 1 ]]; then echo "${base}"; else echo "${base}-$1"; fi
+            if [[ "$1" -le 1 ]]; then echo "${base}"; else echo "${base}.$1"; fi
           }
 
           if [[ "${latest_seq}" -eq 0 ]]; then

@@ -33,23 +33,15 @@ from .espota import OTAError, push_firmware
 _LOGGER = logging.getLogger(__name__)
 
 
-def _version_order(version: str) -> tuple[AwesomeVersion, int] | None:
-    """Sortable key for release tags: <esphome version>[-<build N>]."""
-    base, sep, suffix = version.partition("-")
-    build = 0
-    if sep:
-        if not suffix.isdigit():
-            return None
-        build = int(suffix)
-    parsed = AwesomeVersion(base)
+def _version_order(version: str) -> AwesomeVersion | None:
+    """Comparable version for a release tag: <esphome version>[.<build N>]."""
+    parsed = AwesomeVersion(version)
     if parsed.strategy in (
         AwesomeVersionStrategy.UNKNOWN,
-        # "dev" parses as a special container that compares as newest;
-        # a local dev build must instead always be offered the manifest.
         AwesomeVersionStrategy.SPECIALCONTAINER,
     ):
         return None
-    return (parsed, build)
+    return parsed
 
 
 def _esphome_device_for(
