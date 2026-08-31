@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           latest=$(gh api repos/esphome/esphome/releases/latest --jq .tag_name)
-          current=$(sed -n 's/^ *esphome-version: *//p' .github/workflows/build.yml)
+          current=$(tr -d '[:space:]' < .esphome-version)
           echo "latest=${latest}" >> "$GITHUB_OUTPUT"
           echo "current=${current}" >> "$GITHUB_OUTPUT"
           echo "ESPHome current=${current} latest=${latest}"
@@ -39,7 +39,7 @@ jobs:
           LATEST: ${{ steps.versions.outputs.latest }}
         run: |
           set -euo pipefail
-          sed -i "s/^\( *esphome-version:\) .*/\1 ${LATEST}/" .github/workflows/build.yml
+          printf '%s\n' "${LATEST}" > .esphome-version
 
       - name: Validate configurations with new version
         id: validate
@@ -76,7 +76,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "${branch}"
-          git add .github/workflows/build.yml
+          git add .esphome-version
           git commit -m "Update ESPHome to ${LATEST}"
           git push -f origin "${branch}"
           {

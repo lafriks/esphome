@@ -28,9 +28,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          base=$(sed -n 's/^ *esphome-version: *//p' .github/workflows/build.yml)
+          base=$(tr -d '[:space:]' < .esphome-version)
           if [[ -z "${base}" ]]; then
-            echo "::error::Could not read esphome-version from build.yml"
+            echo "::error::Could not read version from .esphome-version"
             exit 1
           fi
 

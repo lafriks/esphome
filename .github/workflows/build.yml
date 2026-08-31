@@ -15,8 +15,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version:
+    name: Read pinned ESPHome version
+    runs-on: ubuntu-latest
+    outputs:
+      esphome-version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Read .esphome-version
+        id: read
+        run: |
+          set -euo pipefail
+          version=$(tr -d '[:space:]' < .esphome-version)
+          if [[ -z "${version}" ]]; then
+            echo "::error::.esphome-version is empty"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build to Draft Release
+    needs: version
     uses: esphome/workflows/.github/workflows/build-to-draft-release.yml@0fdd5e311b7e744069166696072a1a9cbc5fbeb6  # 2026.8.1
     with:
-      esphome-version: 2026.8.1
+      esphome-version: ${{ needs.version.outputs.esphome-version }}
