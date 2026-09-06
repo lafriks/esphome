@@ -42,23 +42,24 @@ jobs:
           fi
 
           # Highest existing sequence (draft or published) for this base
-          # version: the bare tag counts as 1, `<base>.N` counts as N. The
-          # dotted suffix keeps tags comparable by HA's semantic version
-          # checker (a -N suffix would parse as a semver pre-release and
-          # sort BEFORE the bare tag).
+          # version: the bare tag counts as 0, `<base>.N` counts as N (so the
+          # first rebuild after 2028.6.2 is 2028.6.2.1). The dotted suffix
+          # keeps tags comparable by HA's semantic version checker (a -N
+          # suffix would parse as a semver pre-release and sort BEFORE the
+          # bare tag).
           latest_seq=$(jq -r --arg base "${base}" \
             '[.[] | .tag_name
               | select(. == $base or startswith($base + "."))
-              | if . == $base then 1 else (ltrimstr($base + ".") | tonumber?) end
+              | if . == $base then 0 else (ltrimstr($base + ".") | tonumber?) end
               | select(. != null)]
-             | max // 0' <<< "${releases}")
+             | max // -1' <<< "${releases}")
 
           tag_for_seq() {
-            if [[ "$1" -le 1 ]]; then echo "${base}"; else echo "${base}.$1"; fi
+            if [[ "$1" -le 0 ]]; then echo "${base}"; else echo "${base}.$1"; fi
           }
 
-          if [[ "${latest_seq}" -eq 0 ]]; then
-            seq=1
+          if [[ "${latest_seq}" -eq -1 ]]; then
+            seq=0
           else
             # If the existing release at the highest seq is still a draft,
             # reuse it so subsequent pushes update the same draft. Otherwise
