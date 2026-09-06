@@ -3,16 +3,11 @@ packages:
   updates: !include ../../packages/updates.yaml
   provisioning: !include ../../packages/provisioning.yaml
   improv: !include ../../packages/provisioning-esp32.yaml
+  # Signed OTA verification via the legacy Secure Boot V1 ECDSA scheme
+  # (rev 1.1 silicon cannot verify rsa3072).
+  signing: !include ../../packages/signing-esp32-v1.yaml
 
 esphome:
   project:
     name: "ANTS-MAKE.SIM800L-Gateway"
     version: dev
-
-# Signed OTA verification via the legacy Secure Boot V1 ECDSA scheme
-esp32:
-  framework:
-    advanced:
-      signed_ota_verification:
-        signing_scheme: ecdsa_v1
-        verification_key: ../../keys/ota_signing_v1.pub.bin

@@ -21,7 +21,8 @@ packages/updates.yaml                  http_request OTA + update entity pulling 
 packages/push-updates.yaml             Manifest-URL text sensor for HA-pushed updates (devices that cannot self-update)
 packages/provisioning.yaml             Provisioning window (15 min) for Wi-Fi credentials + API encryption key
 packages/provisioning-esp32.yaml       Improv BLE + Improv serial (ESP32-only)
-packages/signing-esp32.yaml            Signed OTA verification (ESP32-only): only release-signed images are accepted
+packages/signing-esp32.yaml            Signed OTA verification (ESP32-only): only release-signed images are accepted (rsa3072, needs rev 3.0+ silicon)
+packages/signing-esp32-v1.yaml         Signed OTA verification for pre-3.0 ESP32 silicon (legacy Secure Boot V1 ECDSA; list device in .github/ota-signing-v1-devices.txt)
 static/                                GitHub Pages site (ESP Web Tools installer)
 ```
 
@@ -92,7 +93,9 @@ settings - discovery is automatic).
   `esphome run devices/nous/a5t.factory.yaml --device <ip>`. OTA images are
   not signed (ESP8266 has no signed-OTA support).
 - **Ulanzi TC001**: factory firmware enables serial logging for Improv over
-  USB-C; the core config keeps `baud_rate: 0`.
+  USB-C; the core config keeps `baud_rate: 0`. OTA images are signed with the
+  legacy Secure Boot V1 ECDSA scheme - units ship with pre-3.0 ESP32 silicon
+  that cannot verify rsa3072.
 - **XIAO Smart IR Mate**: Improv BLE + serial via the USB-C port.
 - **SIM800L gateway** (ESP32-WROVER-B + SIM800L, T-Call v1.3 pinout): SMS and
   call control via HA actions (`unlock_sim`, `send_sms`, `dial`) and

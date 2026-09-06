@@ -7,8 +7,10 @@ packages:
   provisioning: !include ../../packages/provisioning.yaml
   # Improv Wi-Fi provisioning over BLE and USB serial.
   improv: !include ../../packages/provisioning-esp32.yaml
-  # Only release-signed OTA images are accepted.
-  signing: !include ../../packages/signing-esp32.yaml
+  # Only release-signed OTA images are accepted. TC001 units ship with
+  # pre-3.0 ESP32 silicon (rev 1.0 confirmed in the field) that cannot
+  # verify rsa3072, so the legacy V1 ECDSA scheme is used.
+  signing: !include ../../packages/signing-esp32-v1.yaml
 
 esphome:
   # This will allow for project identification, configuration and updates.
@@ -20,11 +22,3 @@ esphome:
 # USB-C port needs the UART active in the factory firmware.
 logger:
   baud_rate: 115200
-
-# RSA-3072 signature verification (Secure Boot V2 scheme) requires ESP32
-# chip revision 3.0+. TC001 units ship with ECO3+ modules; if flashing ever
-# fails with a chip-revision error, switch the signing package to ecdsa_v1.
-esp32:
-  framework:
-    advanced:
-      minimum_chip_revision: "3.0"

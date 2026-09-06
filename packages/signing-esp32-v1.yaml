@@ -1,0 +1,11 @@
+# Signed OTA verification (factory firmware, ESP32 only) using the legacy
+# Secure Boot V1 ECDSA scheme, for classic ESP32 modules with pre-3.0
+# silicon that cannot verify the default rsa3072 (Secure Boot V2) scheme.
+# Devices using this package must also be listed in
+# .github/ota-signing-v1-devices.txt so releases sign them with the V1 key.
+esp32:
+  framework:
+    advanced:
+      signed_ota_verification:
+        signing_scheme: ecdsa_v1
+        verification_key: ../../keys/ota_signing_v1.pub.bin
