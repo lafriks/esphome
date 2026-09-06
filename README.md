@@ -52,6 +52,7 @@ provisioning AP. Each device warns before wiping:
 - **Nous A5T**: hold the main power button >=5s (button LED blinks)
 - **Ulanzi TC001**: hold the middle button >=5s (on-screen warning + beep)
 - **XIAO Smart IR Mate**: hold the side button (D9) >=5s (long vibration + red blinking)
+- **M5Stack NanoC6**: hold the button >=5s (RGB LED blinks red)
 - **SIM800L gateway**: press RST / cycle power 3 times in a row, each within
   10s of boot (status LED blinks; the board's only button is a hardware RST
   line invisible to firmware)
@@ -97,6 +98,10 @@ settings - discovery is automatic).
   legacy Secure Boot V1 ECDSA scheme - units ship with pre-3.0 ESP32 silicon
   that cannot verify rsa3072.
 - **XIAO Smart IR Mate**: Improv BLE + serial via the USB-C port.
+- **M5Stack NanoC6** (ESP32-C6): active Bluetooth proxy for Home Assistant
+  with continuous scanning. The button emits `single_click`/`double_click`
+  events to HA; the RGB LED is controllable and the blue LED blinks while
+  Wi-Fi is down. OTA images are signed (rsa3072).
 - **SIM800L gateway** (ESP32-WROVER-B + SIM800L, T-Call v1.3 pinout): SMS and
   call control via HA actions (`unlock_sim`, `send_sms`, `dial`) and
   HA events (`esphome.sim800l_sms_received`, `esphome.sim800l_incoming_call`);

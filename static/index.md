@@ -33,6 +33,15 @@ incoming-call caller ID and ring notifications, driven from Home Assistant.
 
 <esp-web-install-button manifest="firmware/sim800l-gateway.manifest.json"></esp-web-install-button>
 
+## M5Stack NanoC6 Bluetooth proxy
+
+Tiny ESP32-C6 dev kit acting as an active Bluetooth proxy for Home Assistant,
+extending BLE coverage to another room
+([product page](https://shop.m5stack.com/products/m5stack-nanoc6-dev-kit),
+[docs](https://docs.m5stack.com/en/core/M5NanoC6)).
+
+<esp-web-install-button manifest="firmware/m5stack-nanoc6.manifest.json"></esp-web-install-button>
+
 ## Seeed XIAO Smart IR Mate
 
 Compact infrared remote hub for Home Assistant with 360° IR emitters, IR

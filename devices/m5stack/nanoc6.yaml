@@ -1,0 +1,149 @@
+substitutions:
+  name: m5stack-nanoc6
+  friendly_name: M5Stack NanoC6
+
+packages:
+  common: !include ../../packages/common.yaml
+  diagnostics: !include ../../packages/diagnostics.yaml
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  flash_size: 4MB
+  # Larger OTA app slots than the default table; the firmware exceeds the
+  # stock 0x1C0000 partitions.
+  partitions: partitions.csv
+  framework:
+    type: esp-idf
+
+esphome:
+  on_boot:
+    # The RGB LED is behind an enable line; power it permanently so the
+    # light (and the factory-reset warning blink) always works.
+    - output.turn_on: rgb_led_power
+
+wifi:
+  # Keep the radio responsive while proxying BLE.
+  power_save_mode: none
+
+# Continuous active scanning (the scan parameters ESPHome recommends for
+# dedicated Bluetooth proxies).
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+bluetooth_proxy:
+  active: true
+
+output:
+  # RGB LED power enable line.
+  - platform: gpio
+    id: rgb_led_power
+    pin: GPIO19
+  # Small blue LED next to the USB-C port; used as the Wi-Fi indicator.
+  - platform: gpio
+    id: blue_led
+    pin: GPIO7
+
+# Controllable RGB LED, also used for the factory-reset warning blink.
+light:
+  - platform: esp32_rmt_led_strip
+    channel_colors: GRB
+    pin: GPIO20
+    num_leds: 1
+    chipset: WS2812
+    rmt_symbols: 48
+    name: RGB Light
+    id: rgb_light
+    restore_mode: RESTORE_DEFAULT_OFF
+    effects:
+      - pulse:
+
+# ---------------------------------------------------------------------------
+# Button -> Home Assistant events; no built-in behavior except the
+# factory-reset hold (>=5s, warned by red blinking of the RGB LED).
+# ---------------------------------------------------------------------------
+event:
+  - platform: template
+    id: button_event
+    name: Button
+    device_class: button
+    event_types:
+      - single_click
+      - double_click
+
+binary_sensor:
+  - platform: gpio
+    id: user_button
+    name: Button
+    # Events (button_event) are the primary interface; raw state is hidden
+    # by default to keep the HA device tidy.
+    disabled_by_default: true
+    pin:
+      number: GPIO9
+      mode: INPUT_PULLUP
+    filters:
+      - invert:
+    on_multi_click:
+      # Double click: two presses in quick succession.
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 0.4s
+          - ON for at most 1s
+          - OFF for at least 0.1s
+        then:
+          - event.trigger:
+              id: button_event
+              event_type: double_click
+      # Single click: one press, released, with no quick second press.
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 0.4s
+        then:
+          - event.trigger:
+              id: button_event
+              event_type: single_click
+      # Factory reset: held for at least 5 seconds. Red blinking warns
+      # before credentials are wiped.
+      - timing:
+          - ON for at least 5s
+        then:
+          - repeat:
+              count: 6
+              then:
+                - light.turn_on:
+                    id: rgb_light
+                    brightness: 100%
+                    red: 100%
+                    green: 0%
+                    blue: 0%
+                    transition_length: 0s
+                - delay: 150ms
+                - light.turn_off:
+                    id: rgb_light
+                    transition_length: 0s
+                - delay: 150ms
+          - button.press: factory_reset_button
+
+# ---------------------------------------------------------------------------
+# Wi-Fi status indicator: blink the blue LED while not connected
+# (provisioning mode or connection lost).
+# ---------------------------------------------------------------------------
+interval:
+  - id: blink_blue_led
+    interval: 500ms
+    then:
+      - lambda: |-
+          static bool state = false;
+          if (!wifi::global_wifi_component->is_connected()) {
+            state = !state;
+          } else {
+            state = false;
+          }
+          if (state) {
+            id(blue_led).turn_on();
+          } else {
+            id(blue_led).turn_off();
+          }
