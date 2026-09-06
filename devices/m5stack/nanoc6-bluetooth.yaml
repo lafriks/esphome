@@ -1,6 +1,6 @@
 substitutions:
-  name: m5stack-nanoc6
-  friendly_name: M5Stack NanoC6
+  name: m5stack-nanoc6-bluetooth
+  friendly_name: M5Stack NanoC6 Bluetooth
 
 packages:
   common: !include ../../packages/common.yaml

@@ -40,7 +40,7 @@ extending BLE coverage to another room
 ([product page](https://shop.m5stack.com/products/m5stack-nanoc6-dev-kit),
 [docs](https://docs.m5stack.com/en/core/M5NanoC6)).
 
-<esp-web-install-button manifest="firmware/m5stack-nanoc6.manifest.json"></esp-web-install-button>
+<esp-web-install-button manifest="firmware/m5stack-nanoc6-bluetooth.manifest.json"></esp-web-install-button>
 
 ## Seeed XIAO Smart IR Mate
 
