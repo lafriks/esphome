@@ -205,18 +205,95 @@ interval:
             - lambda: |-
                 id(rgb8x32)->hide_alarm();
 
+# Buttons carry no built-in behavior (except the middle-button factory-reset
+# hold); click gestures are forwarded to Home Assistant as events. The raw
+# button binary sensors have no name, so they stay internal to the device
+# and are not exported to HA at all.
+event:
+  - platform: template
+    id: left_button_event
+    name: Left Button
+    device_class: button
+    event_types: &button_event_types
+      - single_click
+      - double_click
+      - long_press
+  - platform: template
+    id: middle_button_event
+    name: Middle Button
+    device_class: button
+    event_types: *button_event_types
+  - platform: template
+    id: right_button_event
+    name: Right Button
+    device_class: button
+    event_types: *button_event_types
+
 binary_sensor:
   - platform: gpio
     pin:
       number: GPIO26
       inverted: true
-    name: Left button
+    id: left_button
+    on_multi_click:
+      # Double click: two presses in quick succession.
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 0.4s
+          - ON for at most 1s
+          - OFF for at least 0.1s
+        then:
+          - event.trigger:
+              id: left_button_event
+              event_type: double_click
+      # Single click: one press, released, with no quick second press.
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 0.4s
+        then:
+          - event.trigger:
+              id: left_button_event
+              event_type: single_click
+      # Long press: held for 1-5 seconds.
+      - timing:
+          - ON for 1s to 5s
+          - OFF for at least 0.1s
+        then:
+          - event.trigger:
+              id: left_button_event
+              event_type: long_press
   - platform: gpio
     pin:
       inverted: true
       number: GPIO27
       mode: INPUT_PULLUP
-    name: Middle button
+    id: middle_button
+    on_multi_click:
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 0.4s
+          - ON for at most 1s
+          - OFF for at least 0.1s
+        then:
+          - event.trigger:
+              id: middle_button_event
+              event_type: double_click
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 0.4s
+        then:
+          - event.trigger:
+              id: middle_button_event
+              event_type: single_click
+      # Long press tops out at 5s; holding longer is the factory-reset
+      # gesture handled by on_click below.
+      - timing:
+          - ON for 1s to 5s
+          - OFF for at least 0.1s
+        then:
+          - event.trigger:
+              id: middle_button_event
+              event_type: long_press
     on_click:
       - min_length: 5000ms
         max_length: 60000ms
@@ -226,7 +303,46 @@ binary_sensor:
     pin:
       number: GPIO14
       inverted: true
-    name: Right button
+    id: right_button
+    on_multi_click:
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 0.4s
+          - ON for at most 1s
+          - OFF for at least 0.1s
+        then:
+          - event.trigger:
+              id: right_button_event
+              event_type: double_click
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 0.4s
+        then:
+          - event.trigger:
+              id: right_button_event
+              event_type: single_click
+      - timing:
+          - ON for 1s to 5s
+          - OFF for at least 0.1s
+        then:
+          - event.trigger:
+              id: right_button_event
+              event_type: long_press
+
+  # USB-C / charging detection: the TC001 has no VBUS-sense pin, but the
+  # charger holds the battery rail at ~4.2V+ while USB-C is plugged in;
+  # on battery the (divided) reading sits below ~4.1V. Hysteresis between
+  # the two thresholds avoids flapping near a full battery.
+  - platform: template
+    name: Charging
+    device_class: battery_charging
+    entity_category: diagnostic
+    lambda: |-
+      const float v = id(battery_voltage_raw).state;
+      if (isnan(v)) return {};
+      if (v > 4.18f) return true;
+      if (v < 4.10f) return false;
+      return {};  // between thresholds: keep the previous state
 
 switch:
   - platform: template
@@ -263,9 +379,29 @@ sensor:
       name: Relative Humidity
     update_interval: 60s
 
+  # Averaged battery-rail voltage (behind a 1:1.6 divider), used by the
+  # Charging binary sensor.
+  - platform: adc
+    id: battery_voltage_raw
+    internal: true
+    pin:
+      number: GPIO34
+      allow_other_uses: true
+    update_interval: 5s
+    attenuation: auto
+    accuracy_decimals: 2
+    filters:
+      - multiply: 1.6
+      - sliding_window_moving_average:
+          window_size: 6
+          send_every: 2
+          send_first_at: 1
+
   - platform: adc
     id: battery_voltage
-    pin: GPIO34
+    pin:
+      number: GPIO34
+      allow_other_uses: true
     name: Battery
     update_interval: 10s
     device_class: battery
