@@ -38,6 +38,6 @@ jobs:
   build:
     name: Build to Draft Release
     needs: version
-    uses: esphome/workflows/.github/workflows/build-to-draft-release.yml@0fdd5e311b7e744069166696072a1a9cbc5fbeb6  # 2026.8.1
+    uses: esphome/workflows/.github/workflows/build-to-draft-release.yml@cc3e76de337dc59bc1cba8da58d963cd23b873f1  # 2026.9.0
     with:
       esphome-version: ${{ needs.version.outputs.esphome-version }}
