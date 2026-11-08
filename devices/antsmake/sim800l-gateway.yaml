@@ -21,6 +21,10 @@ packages:
 logger:
   logs:
     status_led: INFO
+    # gsm_diag_poll sends its own AT commands on the shared UART, so the
+    # component logs their replies as "Unhandled"/"Received unexpected OK".
+    # Those warnings are expected and harmless.
+    sim800l: ERROR
 
 esp32:
   board: esp32dev
@@ -377,7 +381,14 @@ sensor:
       }
 
 # GSM diagnostics
+debug:
+
 text_sensor:
+  # Shows why the ESP last rebooted (brownout from modem current spikes, etc.)
+  - platform: debug
+    reset_reason:
+      name: Reset Reason
+      entity_category: diagnostic
   - platform: template
     id: sim_status
     name: SIM Status
