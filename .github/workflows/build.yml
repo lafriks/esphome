@@ -35,9 +35,198 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+  discover-files:
+    name: Resolve Build Files
+    # Skip the pipeline if the Release Drafter run that triggered us failed.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      files: ${{ steps.find.outputs.files }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Find *.factory.yaml files
+        id: find
+        run: |
+          set -euo pipefail
+          files=$(find . -path '*/.*' -prune -o -name '*.factory.yaml' -print | sed 's|^\./||' | sort | jq -RcSn '[inputs | select(length>0)]')
+          if [[ "${files}" == "[]" ]]; then
+            echo "::error::No *.factory.yaml files found"
+            exit 1
+          fi
+          echo "files=${files}" >> "$GITHUB_OUTPUT"
+
+  determine-version:
+    name: Determine Version
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      summary: ${{ steps.info.outputs.summary }}
+      url: ${{ steps.info.outputs.url }}
+    steps:
+      - name: Look up draft release info
+        id: info
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          tag=""
+          url=""
+          body=""
+          if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
+            releases=$(gh api "repos/${GH_REPO}/releases?per_page=100")
+            # Ignore drafts whose tag was reset to an untagged-* placeholder.
+            release_json=$(jq \
+              '[.[] | select(.draft == true and (.tag_name | startswith("untagged-") | not))] | first' \
+              <<< "${releases}")
+            if [[ -z "${release_json}" || "${release_json}" == "null" ]]; then
+              echo "::error::No draft release found"
+              exit 1
+            fi
+            tag=$(jq -r '.tag_name' <<< "${release_json}")
+            url="https://github.com/${GH_REPO}/releases/tag/${tag}"
+            body=$(jq -r '.body' <<< "${release_json}" \
+              | sed '/^> \[!CAUTION\]/,/<!-- ASSETS_PENDING -->/d' \
+              | sed 's/<!-- ASSETS_PENDING -->//g' \
+              | sed '/./,$!d')
+          fi
+          echo "version=${tag}" >> "$GITHUB_OUTPUT"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          {
+            echo "summary<<RELEASE_SUMMARY_EOF"
+            echo "${body}"
+            echo "RELEASE_SUMMARY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
   build:
-    name: Build to Draft Release
-    needs: version
-    uses: esphome/workflows/.github/workflows/build-to-draft-release.yml@31d160e5f0ffa0ee65d5b27cb55c153d415f2abe  # 2026.10.2
+    name: ${{ matrix.file }}
+    needs:
+      - version
+      - discover-files
+      - determine-version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        file: ${{ fromJson(needs.discover-files.outputs.files) }}
+    env:
+      RELEASE_VERSION: ${{ needs.determine-version.outputs.version }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Generate version
+        id: version
+        run: |
+          if [ -n "${RELEASE_VERSION}" ]; then
+            version="${RELEASE_VERSION}"
+          else
+            version="dev-$(date +'%Y%m%d-%H%M')"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # The build container mounts $HOME, so ESP-IDF frameworks and toolchains
+      # (and PlatformIO packages for ESP8266) land here. Restoring them avoids
+      # re-downloading from GitHub on every job; the per-file key saves a
+      # cache for each chip family while falling back to any other device's.
+      - name: Restore ESPHome toolchain cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: |
+            ~/.cache/esphome
+            ~/.platformio
+          key: esphome-${{ needs.version.outputs.esphome-version }}-${{ matrix.file }}
+          restore-keys: |
+            esphome-${{ needs.version.outputs.esphome-version }}-
+
+      - name: Replace project version
+        run: |
+          sed -i "s/version: dev/version: ${{ steps.version.outputs.version }}/g" "${{ matrix.file }}"
+
+      - name: Build Firmware
+        uses: esphome/build-action@ae5408cdbc4f70692bf8e345c4982bca05a93667  # v8.1.0
+        id: esphome-build
+        with:
+          yaml-file: ${{ matrix.file }}
+          version: ${{ needs.version.outputs.esphome-version }}
+          complete-manifest: true
+          release-summary: ${{ needs.determine-version.outputs.summary }}
+          release-url: ${{ needs.determine-version.outputs.url }}
+
+      # The artifact name is embedded as the top-level directory so that
+      # merged downloads always yield <name>/<version>/.
+      - name: Move files for versioning
+        run: |
+          name="${{ steps.esphome-build.outputs.original-name }}"
+          version="${{ steps.version.outputs.version }}"
+          mkdir -p "output/$name/$version"
+          mv ${{ steps.esphome-build.outputs.name }}/* "output/$name/$version/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: ${{ steps.esphome-build.outputs.original-name }}
+          path: output
+
+  upload-to-draft-release:
+    name: Upload to Draft Release
+    if: github.event_name == 'workflow_run'
+    needs:
+      - build
+      - determine-version
+    permissions:
+      contents: write
+    uses: esphome/workflows/.github/workflows/upload-to-gh-release.yml@31d160e5f0ffa0ee65d5b27cb55c153d415f2abe  # 2026.10.2
     with:
-      esphome-version: ${{ needs.version.outputs.esphome-version }}
+      version: ${{ needs.determine-version.outputs.version }}
+      draft: true
+
+  remove-pending-warning:
+    name: Remove Pending Warning
+    if: github.event_name == 'workflow_run'
+    needs:
+      - upload-to-draft-release
+      - determine-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove ASSETS_PENDING warning from draft release body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.determine-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          releases=$(gh api "repos/${GH_REPO}/releases?per_page=100")
+          release=$(jq --arg tag "${TAG}" \
+            '[.[] | select(.tag_name == $tag and .draft == true)] | first' <<< "${releases}")
+          if [[ -z "${release}" || "${release}" == "null" ]]; then
+            echo "Draft release ${TAG} not found; nothing to clean up"
+            exit 0
+          fi
+          release_id=$(jq -r '.id' <<< "${release}")
+          body=$(jq -r '.body' <<< "${release}")
+          new_body=$(echo "${body}" \
+            | sed '/^> \[!CAUTION\]/,/<!-- ASSETS_PENDING -->/d' \
+            | sed 's/<!-- ASSETS_PENDING -->//g' \
+            | sed '/./,$!d')
+          if [[ "${new_body}" != "${body}" ]]; then
+            # tag_name and name must be re-sent or the draft's tag is reset.
+            gh api "repos/${GH_REPO}/releases/${release_id}" \
+              --method PATCH \
+              --field "body=${new_body}" \
+              --field "tag_name=${TAG}" \
+              --field "name=${TAG}" \
+              --field "draft=true" \
+              --silent
+          fi
